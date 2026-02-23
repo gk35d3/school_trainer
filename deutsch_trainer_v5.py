@@ -393,27 +393,67 @@ class Transcriber:
         self._model = None
         self._ready = False
         self._loading = True
+        self._error = ""
         threading.Thread(target=self._load, daemon=True).start()
 
     def _load(self):
-        if WHISPER_OK:
+        if not WHISPER_OK:
+            self._error = "faster-whisper not installed"
+            self._loading = False
+            return
+
+        # Try model sizes in order of preference
+        model_sizes = [WHISPER_MODEL_SIZE, "base", "tiny"]
+        # De-duplicate while preserving order
+        seen = set()
+        unique_sizes = []
+        for s in model_sizes:
+            if s not in seen:
+                seen.add(s)
+                unique_sizes.append(s)
+
+        for size in unique_sizes:
+            # Strategy 1: try local_files_only=True first
             try:
+                print(f"[DT] trying Whisper model '{size}' (local only)...")
                 self._model = WhisperModel(
-                    WHISPER_MODEL_SIZE,
+                    size,
                     device="cpu",
                     compute_type="int8",
                     local_files_only=True,
                 )
                 self._ready = True
-                print("[DT] Whisper model loaded successfully")
+                print(f"[DT] Whisper model '{size}' loaded successfully (local)")
+                self._loading = False
+                return
             except Exception as e:
-                print(f"[DT] Whisper load failed: {e}")
+                print(f"[DT] Whisper local load '{size}' failed: {e}")
+
+            # Strategy 2: allow download
+            try:
+                print(f"[DT] trying Whisper model '{size}' (allow download)...")
+                self._model = WhisperModel(
+                    size,
+                    device="cpu",
+                    compute_type="int8",
+                )
+                self._ready = True
+                print(f"[DT] Whisper model '{size}' loaded successfully (downloaded)")
+                self._loading = False
+                return
+            except Exception as e:
+                print(f"[DT] Whisper download load '{size}' failed: {e}")
+
+        self._error = "All Whisper model load attempts failed. Check terminal for details."
+        print(f"[DT] ERROR: {self._error}")
         self._loading = False
 
     @property
     def ready(self): return self._ready
     @property
     def loading(self): return self._loading
+    @property
+    def error(self): return self._error
 
     def transcribe(self, audio: np.ndarray) -> str:
         if not self._ready or self._model is None: return ""
@@ -652,6 +692,7 @@ def main():
     recorder    = AudioRecorder()
     transcriber = Transcriber()
 
+    # Wait for Whisper to finish loading (or fail)
     if WHISPER_OK:
         while transcriber.loading:
             screen.fill(BG)
@@ -661,6 +702,31 @@ def main():
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     pygame.quit(); return
+
+        # If Whisper failed, show error and let user press ENTER to continue or ESC to quit
+        if not transcriber.ready:
+            print(f"[DT] Whisper not ready after loading. Error: {transcriber.error}")
+            waiting_for_user = True
+            while waiting_for_user:
+                screen.fill(BG)
+                rc(screen, font_mid, "Sprach-Erkennung fehlgeschlagen!", RED, w//2, int(h*0.35))
+                rc(screen, font_small, transcriber.error, DIM, w//2, int(h*0.45))
+                rc(screen, font_small, "Das Modell wird jetzt heruntergeladen...", YELLOW, w//2, int(h*0.55))
+                rc(screen, font_small, "Bitte warten oder ESC zum Beenden", DIM, w//2, int(h*0.65))
+                pygame.display.flip()
+                clock.tick(FPS)
+                for ev in pygame.event.get():
+                    if ev.type == pygame.QUIT:
+                        pygame.quit(); return
+                    if ev.type == pygame.KEYDOWN:
+                        if ev.key == pygame.K_ESCAPE:
+                            pygame.quit(); return
+                        if ev.key == pygame.K_RETURN:
+                            waiting_for_user = False
+                # Check if a background retry succeeded (transcriber thread may still be running
+                # in rare edge cases — this is just a safety check)
+                if transcriber.ready:
+                    waiting_for_user = False
 
     session_start     = now_ts()
     stars_at_start    = stars_earned(state.get("total_questions_seen", 0))
@@ -715,17 +781,18 @@ def main():
     task = next_task()
     print(f"[DT] first task: '{task['prompt']}' mode={task['mode']}")
 
-    def start_rec():
+    def start_rec() -> bool:
         nonlocal machine_state
         if not (WHISPER_OK and transcriber.ready):
             print("[DT] cannot record: Whisper not ready")
-            return
+            return False
         vs["done"]       = False
         vs["transcript"] = ""
         vs["rec_active"] = True
         machine_state = ST_RECORDING
         recorder.start()
         print(f"[DT] state -> {ST_RECORDING}: recording started")
+        return True
 
     def stop_rec_and_transcribe():
         nonlocal machine_state
@@ -890,7 +957,8 @@ def main():
                                 vs["done"] = False
                                 vs["transcript"] = ""
                                 print(f"[DT] SPACE down in state={machine_state} -> starting recording")
-                                start_rec()
+                                if not start_rec():
+                                    vs["space_held"] = False  # reset — recording didn't actually start
 
                     # Parent confirm keys
                     if machine_state == ST_PARENT_CONFIRM:
@@ -1023,7 +1091,14 @@ def main():
             rc(screen, font_mid, "Y = Ja     N = Nochmal", DIM, w//2, int(h*0.66))
 
         elif machine_state == ST_IDLE:
-            if task["mode"] == "voice_parent":
+            if not (WHISPER_OK and transcriber.ready):
+                # Whisper not available — show clear error
+                if transcriber.loading:
+                    rc(screen, font_mid, "Sprach-Erkennung wird geladen...", YELLOW, w//2, int(h*0.52))
+                else:
+                    rc(screen, font_mid, "Sprach-Erkennung nicht verfuegbar!", RED, w//2, int(h*0.52))
+                    rc(screen, font_hint, "Siehe Terminal fuer Details", DIM, w//2, int(h*0.60))
+            elif task["mode"] == "voice_parent":
                 rc(screen, font_hint, "Kind liest laut vor - dann LEERTASTE", VDIM, w//2, int(h*0.52))
             else:
                 rc(screen, font_mid, "LEERTASTE halten", BLUE, w//2, int(h*0.52))

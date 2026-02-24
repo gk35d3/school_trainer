@@ -1,0 +1,44 @@
+{
+  "level": "A (gut) – Strikt: Rechtschreibung + Grammatik + Satzzeichen",
+  "total_attempts": 2,
+  "total_correct": 1,
+  "streak": 0,
+  "today": "2026-02-23",
+  "today_attempts": 2,
+  "today_correct": 1,
+  "pattern_stats": {
+    "double_consonant_nn": {
+      "attempts": 0,
+      "errors": 0
+    },
+    "sleep_words": {
+      "attempts": 0,
+      "errors": 0
+    },
+    "accusative_einen": {
+      "attempts": 0,
+      "errors": 0
+    },
+    "esz_umlaut": {
+      "attempts": 0,
+      "errors": 0
+    },
+    "capitalization": {
+      "attempts": 0,
+      "errors": 0
+    },
+    "punctuation": {
+      "attempts": 0,
+      "errors": 0
+    }
+  },
+  "recent_mistakes": [
+    {
+      "ts": 1771860775,
+      "pattern": "gap_fill",
+      "prompt": "Fülle die Lücke UND schreibe den ganzen Satz korrekt:\nDie Kinder bauen einen großen _____.",
+      "user": "Schneemann",
+      "target": "Die Kinder bauen einen großen Schneemann."
+    }
+  ]
+}

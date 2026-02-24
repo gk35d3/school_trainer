@@ -1,0 +1,27 @@
+{"t": 1771668281.071691, "q_index": 1, "prompt": "🏠  Da wohnt man drin", "answer": "Haus", "typed": "Haus", "correct": true, "attempt": 1, "rt": 49.534038066864014, "tags": ["schreiben", "l1"]}
+{"t": 1771668304.0995069, "q_index": 2, "prompt": "🏫  Da lernen Kinder", "answer": "Schule", "typed": "Schule", "correct": true, "attempt": 1, "rt": 22.21150517463684, "tags": ["schreiben", "l2", "sch"]}
+{"t": 1771668349.0819688, "q_index": 3, "prompt": "Freund", "answer": "Freund", "typed": "Freund", "correct": true, "attempt": 1, "rt": 44.16596698760986, "tags": ["lesen", "l2", "eu"]}
+{"t": 1771668395.9995232, "q_index": 4, "prompt": "🌙  Leuchtet nachts", "answer": "Mond", "typed": "Sterne", "correct": false, "attempt": 1, "rt": 46.10758185386658, "tags": ["schreiben", "l1"]}
+{"t": 1771668426.1590772, "q_index": 4, "prompt": "🌙  Leuchtet nachts", "answer": "Mond", "typed": "Mond", "correct": true, "attempt": 2, "rt": 76.2671480178833, "tags": ["schreiben", "l1"]}
+{"t": 1771668513.261972, "q_index": 5, "prompt": "Die Katze schlaeft.", "answer": "Die Katze schlaeft.", "typed": "Die Katze schlaeft.", "correct": true, "attempt": 1, "rt": 86.28617596626282, "tags": ["lesen", "l3", "satz"]}
+{"t": 1771668549.9046001, "q_index": 6, "prompt": "Schule", "answer": "Schule", "typed": " Schule", "correct": true, "attempt": 1, "rt": 35.82807397842407, "tags": ["lesen", "l2", "sch"]}
+{"t": 1771668588.052947, "q_index": 7, "prompt": "🚗  Fährt auf der Straße", "answer": "Auto", "typed": "Auto", "correct": true, "attempt": 1, "rt": 37.34637475013733, "tags": ["schreiben", "l1"]}
+{"t": 1771668600.268973, "q_index": 8, "prompt": "Freund", "answer": "Freund", "typed": "fr", "correct": false, "attempt": 1, "rt": 11.399536848068237, "tags": ["lesen", "l2", "eu"]}
+{"t": 1771668628.313146, "q_index": 8, "prompt": "Freund", "answer": "Freund", "typed": "Freund", "correct": true, "attempt": 2, "rt": 39.44370102882385, "tags": ["lesen", "l2", "eu"]}
+{"t": 1771668706.4962811, "q_index": 9, "prompt": "Ball", "answer": "Ball", "typed": "Ball", "correct": true, "attempt": 1, "rt": 77.36653327941895, "tags": ["lesen", "l1"]}
+{"t": 1771668729.6958778, "q_index": 10, "prompt": "🏫  Da lernen Kinder", "answer": "Schule", "typed": "Schule", "correct": true, "attempt": 1, "rt": 22.383647918701172, "tags": ["schreiben", "l2", "sch"]}
+{"t": 1771668749.297428, "q_index": 11, "prompt": "🐝  Macht Honig", "answer": "Biene", "typed": "Bine", "correct": false, "attempt": 1, "rt": 18.78867816925049, "tags": ["schreiben", "l2", "ie"]}
+{"t": 1771668783.7532318, "q_index": 11, "prompt": "🐝  Macht Honig", "answer": "Biene", "typed": "Biene", "correct": true, "attempt": 2, "rt": 53.24447798728943, "tags": ["schreiben", "l2", "ie"]}
+{"t": 1771668800.411623, "q_index": 12, "prompt": "Hund", "answer": "Hund", "typed": "Hund", "correct": true, "attempt": 1, "rt": 15.843513011932373, "tags": ["lesen", "l1"]}
+{"t": 1771668907.405826, "q_index": 13, "prompt": "Das Auto ist rot.", "answer": "Das Auto ist rot.", "typed": "Das Auto ist rot", "correct": true, "attempt": 1, "rt": 106.17917990684509, "tags": ["lesen", "l3", "satz"]}
+{"t": 1771668946.781586, "q_index": 14, "prompt": "Baum", "answer": "Baum", "typed": "Baum", "correct": true, "attempt": 1, "rt": 38.5615451335907, "tags": ["lesen", "l1"]}
+{"t": 1771669026.0132322, "q_index": 15, "prompt": "🌈  Kommt nach dem Regen", "answer": "Regenbogen", "typed": "Regenbogen", "correct": true, "attempt": 1, "rt": 78.41830611228943, "tags": ["schreiben", "l2"]}
+{"t": 1771669071.4943402, "q_index": 16, "prompt": "Stiefel", "answer": "Stiefel", "typed": "Stiefel", "correct": true, "attempt": 1, "rt": 44.66422128677368, "tags": ["lesen", "l2", "ie"]}
+{"t": 1771669085.1457212, "q_index": 17, "prompt": "Fisch", "answer": "Fisch", "typed": "Fisch", "correct": true, "attempt": 1, "rt": 12.834326028823853, "tags": ["lesen", "l1"]}
+{"t": 1771669123.1392472, "q_index": 18, "prompt": "Katze", "answer": "Katze", "typed": "Katze", "correct": true, "attempt": 1, "rt": 37.17657208442688, "tags": ["lesen", "l1"]}
+{"t": 1771669174.933362, "q_index": 19, "prompt": "Haus", "answer": "Haus", "typed": "Haus", "correct": true, "attempt": 1, "rt": 50.980141162872314, "tags": ["lesen", "l1"]}
+{"t": 1771669200.0704908, "q_index": 20, "prompt": "Feuer", "answer": "Feuer", "typed": "Feuer", "correct": true, "attempt": 1, "rt": 24.322852849960327, "tags": ["lesen", "l2", "eu"]}
+{"t": 1771669224.3071291, "q_index": 21, "prompt": "☀️  Wärmt uns und leuchtet", "answer": "Sonne", "typed": "Sone", "correct": false, "attempt": 1, "rt": 23.42431378364563, "tags": ["schreiben", "l1"]}
+{"t": 1771669264.483426, "q_index": 21, "prompt": "☀️  Wärmt uns und leuchtet", "answer": "Sonne", "typed": "Sonen", "correct": false, "attempt": 2, "rt": 63.60060906410217, "tags": ["schreiben", "l1"]}
+{"t": 1771669275.708283, "q_index": 21, "prompt": "☀️  Wärmt uns und leuchtet", "answer": "Sonne", "typed": "Sonne", "correct": true, "attempt": 3, "rt": 74.8254508972168, "tags": ["schreiben", "l1"]}
+{"t": 1771669313.9327219, "q_index": 22, "prompt": "Schule", "answer": "Schule", "typed": "Schule", "correct": true, "attempt": 1, "rt": 37.412041902542114, "tags": ["lesen", "l2", "sch"]}

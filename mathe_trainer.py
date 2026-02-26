@@ -25,6 +25,8 @@ CORRECT_PAUSE_SECONDS = 0.6
 RAMP_MAX_BONUS = 0.20
 ALLOW_NEGATIVES = False
 TAG_WINDOW = 80
+MIN_VALUE = 1
+MAX_VALUE = 100
 
 APP_ID = "math"
 
@@ -153,15 +155,22 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
 
 # Objective: Translate abstract difficulty into numeric operand limits.
 def difficulty_to_limits(difficulty: float) -> Dict[str, Any]:
-    max_small = int(8 + 22 * difficulty)
-    max_mid = int(18 + 60 * difficulty)
-    max_two = int(24 + 75 * difficulty)
-    allow_over_99 = difficulty >= 0.85
+    # Keep all generated values in a stable 1..100 curriculum while scaling complexity.
+    if difficulty < 0.20:
+        max_small, max_mid, max_two = 10, 20, 35
+    elif difficulty < 0.40:
+        max_small, max_mid, max_two = 15, 35, 50
+    elif difficulty < 0.60:
+        max_small, max_mid, max_two = 20, 50, 70
+    elif difficulty < 0.80:
+        max_small, max_mid, max_two = 20, 70, 90
+    else:
+        max_small, max_mid, max_two = 20, 85, 100
+
     return {
         "max_small": max_small,
         "max_mid": max_mid,
         "max_two": max_two,
-        "allow_over_99": allow_over_99,
     }
 
 
@@ -181,17 +190,19 @@ def make_problem_for_target(difficulty: float, target_tag: str) -> Problem:
             op = choose_op(difficulty)
 
         if target_tag in ("add_small", "sub_small"):
-            a = random.randint(0, max_small)
-            b = random.randint(0, max_small)
+            a = random.randint(MIN_VALUE, max_small)
+            b = random.randint(MIN_VALUE, max_small)
 
         elif target_tag in ("tens", "add_tens", "sub_tens"):
             choices = list(range(10, min(90, max_two) + 1, 10))
             a, b = random.choice(choices), random.choice(choices)
 
         elif target_tag == "add_cross10":
-            a10 = random.randint(0, max_mid // 10)
+            a10 = random.randint(0, max(1, max_mid // 10))
             a1 = random.randint(1, 9)
             a = min(a10 * 10 + a1, max_mid)
+            if a % 10 == 0:
+                a = max(MIN_VALUE, a - 1)
             b1 = random.randint(max(1, 10 - (a % 10)), 9)
             b10 = random.randint(0, max(0, (max_mid - b1) // 10))
             b = min(b10 * 10 + b1, max_mid)
@@ -232,16 +243,17 @@ def make_problem_for_target(difficulty: float, target_tag: str) -> Problem:
                 if b > a:
                     a, b = b, a
         else:
-            a = random.randint(0, max_mid)
-            b = random.randint(0, max_mid)
+            a = random.randint(MIN_VALUE, max_mid)
+            b = random.randint(MIN_VALUE, max_mid)
 
         if op == "-" and not ALLOW_NEGATIVES and b > a:
             a, b = b, a
 
         ans = a + b if op == "+" else a - b
-        if not limits["allow_over_99"] and ans > 99:
+        if ans < MIN_VALUE or ans > MAX_VALUE:
             continue
-        if not ALLOW_NEGATIVES and ans < 0:
+
+        if a < MIN_VALUE or b < MIN_VALUE or a > MAX_VALUE or b > MAX_VALUE:
             continue
 
         tags = assign_tags(a, b, op)
@@ -250,27 +262,28 @@ def make_problem_for_target(difficulty: float, target_tag: str) -> Problem:
         return Problem(a=a, b=b, op=op, tags=tags)
 
     op = choose_op(difficulty)
-    a, b = random.randint(0, max_mid), random.randint(0, max_mid)
+    a, b = random.randint(MIN_VALUE, max_mid), random.randint(MIN_VALUE, max_mid)
     if op == "-" and b > a:
         a, b = b, a
+    if a + b > MAX_VALUE and op == "+":
+        b = max(MIN_VALUE, MAX_VALUE - a)
+    if a - b < MIN_VALUE and op == "-":
+        b = max(MIN_VALUE, a - MIN_VALUE)
     return Problem(a=a, b=b, op=op, tags=assign_tags(a, b, op))
 
 
 # Objective: Gate which tags are eligible at each difficulty range.
 def allowed_tags_for_difficulty(difficulty: float) -> List[str]:
-    tags = ["add_small", "sub_small", "tens", "add_cross10", "add_two_digit", "sub_two_digit"]
-    if difficulty >= 0.30:
-        tags += ["add_no_carry", "sub_no_borrow", "add_carry", "sub_borrow"]
-    if difficulty >= 0.55:
-        tags += ["add_carry", "sub_borrow"]
-
-    out: List[str] = []
-    seen = set()
-    for tag in tags:
-        if tag not in seen:
-            seen.add(tag)
-            out.append(tag)
-    return out
+    # Clear difficulty bands so hardness rises consistently.
+    if difficulty < 0.20:
+        return ["add_small", "sub_small"]
+    if difficulty < 0.40:
+        return ["add_small", "sub_small", "add_cross10", "tens"]
+    if difficulty < 0.60:
+        return ["add_cross10", "tens", "add_two_digit", "sub_two_digit", "add_no_carry", "sub_no_borrow"]
+    if difficulty < 0.80:
+        return ["add_two_digit", "sub_two_digit", "add_no_carry", "sub_no_borrow", "add_carry", "sub_borrow"]
+    return ["add_carry", "sub_borrow", "add_two_digit", "sub_two_digit", "add_cross10", "add_no_carry", "sub_no_borrow"]
 
 
 # =========================

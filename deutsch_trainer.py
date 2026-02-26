@@ -49,39 +49,87 @@ DEFAULT_RT = 10.0
 QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Bienen?",
-        "keyword_groups": [["bienen"], ["fliegen", "summen", "sammeln"]],
+        "keyword_groups": [["bienen"], ["fliegen", "summen", "sammeln", "tanzen", "suchen", "tragen"]],
         "tags": ["noun_cap", "verb_end", "sentence_flow", "punct"],
         "example": "Bienen fliegen und sammeln Nektar.",
+        "level": 1,
     },
     {
         "question": "Was macht ein Hund im Park?",
-        "keyword_groups": [["hund"], ["läuft", "springt", "spielt", "rennt"]],
+        "keyword_groups": [["hund"], ["läuft", "springt", "spielt", "rennt", "schnüffelt", "bellt"]],
         "tags": ["noun_cap", "verb_end", "double_consonant", "punct"],
         "example": "Ein Hund läuft und spielt im Park.",
+        "level": 1,
     },
     {
         "question": "Was machen Kinder in der Schule?",
-        "keyword_groups": [["kinder"], ["lernen", "lesen", "schreiben"]],
+        "keyword_groups": [["kinder"], ["lernen", "lesen", "schreiben", "rechnen", "malen", "üben"]],
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
         "example": "Kinder lernen, lesen und schreiben in der Schule.",
+        "level": 2,
     },
     {
         "question": "Wie ist die Straße nach dem Regen?",
         "keyword_groups": [["straße"], ["nass", "glatt", "rutschig"]],
         "tags": ["noun_cap", "umlaut_esz", "punct", "sentence_flow"],
         "example": "Die Straße ist nass und glatt.",
+        "level": 2,
     },
     {
         "question": "Was machen Vögel am Morgen?",
-        "keyword_groups": [["vögel"], ["fliegen", "singen"]],
+        "keyword_groups": [["vögel"], ["fliegen", "singen", "rufen", "suchen", "bauen"]],
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "punct"],
         "example": "Vögel fliegen und singen am Morgen.",
+        "level": 2,
     },
     {
         "question": "Was macht die Katze in der Nacht?",
-        "keyword_groups": [["katze"], ["schleicht", "jagt", "läuft"]],
+        "keyword_groups": [["katze"], ["schleicht", "jagt", "läuft", "springt", "lauscht", "klettert"]],
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
         "example": "Die Katze schleicht und jagt in der Nacht.",
+        "level": 2,
+    },
+    {
+        "question": "Was machen Feuerwehrleute bei einem Einsatz?",
+        "keyword_groups": [["feuerwehrleute"], ["löschen", "retten", "helfen", "fahren", "tragen"]],
+        "tags": ["noun_cap", "double_consonant", "verb_end", "sentence_flow", "punct"],
+        "example": "Feuerwehrleute fahren schnell, löschen das Feuer und retten Menschen.",
+        "level": 3,
+    },
+    {
+        "question": "Was machen Forscher im Labor?",
+        "keyword_groups": [["forscher"], ["untersuchen", "messen", "testen", "beobachten", "notieren"]],
+        "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "sentence_flow", "punct"],
+        "example": "Forscher untersuchen Proben, messen Werte und notieren Ergebnisse.",
+        "level": 3,
+    },
+    {
+        "question": "Was machen Bauern auf dem Feld?",
+        "keyword_groups": [["bauern"], ["pflanzen", "ernten", "gießen", "fahren", "arbeiten"]],
+        "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
+        "example": "Bauern pflanzen Gemüse, gießen die Felder und ernten später.",
+        "level": 3,
+    },
+    {
+        "question": "Was machen Musiker vor einem Auftritt?",
+        "keyword_groups": [["musiker"], ["üben", "stimmen", "spielen", "proben", "hören"]],
+        "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
+        "example": "Musiker üben zusammen, stimmen ihre Instrumente und hören aufeinander.",
+        "level": 4,
+    },
+    {
+        "question": "Was machen Astronauten in einer Raumstation?",
+        "keyword_groups": [["astronauten"], ["forschen", "reparieren", "beobachten", "messen", "dokumentieren"]],
+        "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "sentence_flow", "punct"],
+        "example": "Astronauten forschen, reparieren Geräte und beobachten die Erde.",
+        "level": 4,
+    },
+    {
+        "question": "Wie helfen Nachbarn einander nach einem Sturm?",
+        "keyword_groups": [["nachbarn"], ["helfen", "reparieren", "räumen", "teilen", "organisieren"]],
+        "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
+        "example": "Nachbarn helfen einander, räumen Wege frei und teilen Essen.",
+        "level": 5,
     },
 ]
 
@@ -168,6 +216,10 @@ class WritingItem:
     tags: List[str]
     kind: str
     example: str
+    min_words: int
+    min_verbs: int
+    require_connector: bool
+    level: int
 
 
 # Objective: Select next weakest tag for adaptive targeting.
@@ -186,16 +238,59 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
 
 
 # Objective: Build one open composition question aligned to a target tag.
-def make_open_question_item(target_tag: str) -> WritingItem:
-    targeted = [tpl for tpl in QUESTION_TEMPLATES if target_tag in tpl["tags"]]
-    tpl = random.choice(targeted if targeted else QUESTION_TEMPLATES)
+def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
+    # Difficulty bands map to broader content + stricter writing requirements.
+    if difficulty < 0.20:
+        min_level = 1
+        max_level = 1
+        min_words = 3
+        min_verbs = 1
+        require_connector = False
+    elif difficulty < 0.40:
+        min_level = 1
+        max_level = 2
+        min_words = 6
+        min_verbs = 1
+        require_connector = False
+    elif difficulty < 0.60:
+        min_level = 2
+        max_level = 3
+        min_words = 8
+        min_verbs = 2
+        require_connector = True
+    elif difficulty < 0.80:
+        min_level = 3
+        max_level = 4
+        min_words = 10
+        min_verbs = 2
+        require_connector = True
+    else:
+        min_level = 4
+        max_level = 5
+        min_words = 12
+        min_verbs = 3
+        require_connector = True
+
+    candidates = [tpl for tpl in QUESTION_TEMPLATES if min_level <= tpl.get("level", 1) <= max_level]
+    targeted = [tpl for tpl in candidates if target_tag in tpl["tags"]]
+    tpl = random.choice(targeted if targeted else candidates)
+
+    if require_connector:
+        instruction = "Schreibe 1-2 Saetze mit Verbindung (z.B. und/aber/weil):"
+    else:
+        instruction = "Schreibe einen ganzen Antwortsatz (freie Form):"
+
     return WritingItem(
-        instruction="Schreibe einen ganzen Antwortsatz (freie Form):",
+        instruction=instruction,
         prompt=f"Frage: {tpl['question']}",
         keyword_groups=tpl["keyword_groups"],
         tags=list(sorted(set(tpl["tags"] + [target_tag]))),
         kind="open_question",
         example=f"Beispiel: {tpl['example']}",
+        min_words=min_words,
+        min_verbs=min_verbs,
+        require_connector=require_connector,
+        level=int(tpl.get("level", 1)),
     )
 
 
@@ -224,9 +319,9 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
         issues.append("Satzzeichen am Ende fehlt")
 
     # Grammar: minimal sentence length.
-    if len(words) < 3:
+    if len(words) < item.min_words:
         error_word_idxs.update(range(len(words)))
-        issues.append("Antwort ist zu kurz")
+        issues.append(f"Antwort ist zu kurz (mindestens {item.min_words} Woerter)")
 
     # Semantic + spelling anchors: each group needs at least one word.
     for group in item.keyword_groups:
@@ -253,10 +348,18 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
             error_word_idxs.update(range(len(words)))
             issues.append(f"Inhalt ergänzen: eines von {', '.join(group)}")
 
-    # Grammar: ensure at least one finite-looking verb.
-    if not any(w.endswith(("t", "en")) for w in words_lower):
+    # Grammar: ensure enough finite-looking verbs for the current level.
+    verb_like = [w for w in words_lower if w.endswith(("t", "en"))]
+    if len(verb_like) < item.min_verbs:
         error_word_idxs.update(range(len(words)))
-        issues.append("Ein Verb fehlt")
+        issues.append(f"Zu wenige Verben (mindestens {item.min_verbs})")
+
+    # Structure: require connector words at higher difficulty levels.
+    if item.require_connector:
+        connectors = {"und", "aber", "weil", "denn", "deshalb", "dann", "danach", "später"}
+        if not any(w in connectors for w in words_lower):
+            error_word_idxs.update(range(len(words)))
+            issues.append("Verbinde Gedanken mit und/aber/weil")
 
     ok = len(issues) == 0
     message = " | ".join(issues[:2]) if issues else ""
@@ -266,7 +369,7 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
 # Objective: Keep only open-question mode as requested.
 def pick_next_item(state: Dict[str, Any], difficulty: float) -> WritingItem:
     target = pick_target_tag(state, ALLOWED_TAGS)
-    return make_open_question_item(target)
+    return make_open_question_item(target, difficulty)
 
 
 # =========================

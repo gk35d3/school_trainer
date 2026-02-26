@@ -3,6 +3,7 @@
 Two fullscreen pygame trainers:
 - `mathe_trainer.py`
 - `deutsch_trainer.py`
+- shared adaptive logic: `adaptive_core.py`
 
 Both apps now write to one shared file in the project root:
 - `trainer_data.jsonl`
@@ -33,6 +34,14 @@ Attempt lines also include:
 
 Both trainers use fixed sets of questions:
 - `SESSION_QUESTIONS = 40`
+
+## German Exercise Types
+
+The German trainer now mixes:
+- `copy_word`
+- `copy_sentence`
+- `fill_blank` (single, clear one-word answer)
+- `question` (read + answer)
 
 ## Focus Retuning
 

@@ -1,9 +1,11 @@
 import random
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import pygame
 
+from adaptive_core import build_state_from_events, clamp, update_overall_difficulty, update_tag_stats, weighted_pick_tag
 from trainer_data import append_event, load_recent_events, now_ts
 
 # =========================
@@ -40,12 +42,16 @@ FOCUS_BOOSTS = {
 # =========================
 # Helpers
 # =========================
-def clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
+DEFAULT_ACC = 0.58
+DEFAULT_RT = 10.0
+
+
+def to_nfc(s: str) -> str:
+    return unicodedata.normalize("NFC", s)
 
 
 def normalize_text(s: str) -> str:
-    s = s.strip()
+    s = to_nfc(s).strip()
     if NORMALIZE_MULTI_SPACES:
         s = " ".join(s.split())
     return s
@@ -55,55 +61,20 @@ def is_match(typed: str, target: str) -> bool:
     return normalize_text(typed) == normalize_text(target)
 
 
-def update_tag_stats(state: Dict[str, Any], tags: List[str], correct: bool, rt: float) -> None:
-    for tag in tags:
-        t = state["tags"].setdefault(tag, {"attempts": []})
-        t["attempts"].append({"correct": bool(correct), "rt": float(rt), "ts": now_ts()})
-        if len(t["attempts"]) > TAG_WINDOW:
-            t["attempts"] = t["attempts"][-TAG_WINDOW:]
-
-
-def tag_metrics(state: Dict[str, Any], tag: str) -> Tuple[float, float, int]:
-    t = state["tags"].get(tag, {}).get("attempts", [])
-    n = len(t)
-    if n == 0:
-        return (0.58, 10.0, 0)
-    acc = sum(1 for a in t if a.get("correct")) / n
-    avg_rt = sum(a.get("rt", 10.0) for a in t) / n
-    return (acc, avg_rt, n)
-
-
-def update_overall_difficulty(state: Dict[str, Any]) -> None:
-    tags = list(state["tags"].keys())
-    if not tags:
-        return
-
-    scores = []
-    for tag in tags:
-        acc, avg_rt, n = tag_metrics(state, tag)
-        rt_norm = clamp((avg_rt - 3.0) / 11.0, 0.0, 1.0)
-        score = (acc * 0.75) + ((1.0 - rt_norm) * 0.25)
-        scores.append((score, n ** 0.5))
-
-    total_w = sum(w for _, w in scores) or 1.0
-    overall_score = sum(s * w for s, w in scores) / total_w
-    target = clamp((overall_score - 0.50) / 0.50, 0.0, 1.0)
-    state["difficulty"] = clamp(0.90 * float(state["difficulty"]) + 0.10 * target, 0.0, 1.0)
-
-
 def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    state: Dict[str, Any] = {"difficulty": 0.18, "total_questions_seen": 0, "tags": {}}
-    for ev in events:
-        if ev.get("app") != APP_ID or ev.get("type") != "attempt":
-            continue
-        tags = ev.get("tags") or []
-        correct = bool(ev.get("correct", False))
-        rt = float(ev.get("rt", 10.0))
-        update_tag_stats(state, tags, correct, rt)
-        if correct:
-            state["total_questions_seen"] = int(state["total_questions_seen"]) + 1
-    update_overall_difficulty(state)
-    return state
+    return build_state_from_events(
+        events,
+        app_id=APP_ID,
+        initial_difficulty=0.18,
+        default_acc=DEFAULT_ACC,
+        default_rt=DEFAULT_RT,
+        tag_window=TAG_WINDOW,
+        rt_good=3.0,
+        rt_bad=14.0,
+        smooth_old=0.90,
+        smooth_new=0.10,
+        total_seen_key="total_questions_seen",
+    )
 
 
 # =========================
@@ -111,6 +82,7 @@ def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 # =========================
 @dataclass
 class WritingItem:
+    instruction: str
     prompt: str
     target: str
     tags: List[str]
@@ -179,24 +151,17 @@ ALLOWED_TAGS = [
 
 
 def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
-    weights = []
-    for tag in allowed_tags:
-        acc, avg_rt, n = tag_metrics(state, tag)
-        rt_norm = clamp((avg_rt - 3.0) / 11.0, 0.0, 1.0)
-        weakness = (1.0 - acc) * 0.7 + rt_norm * 0.3
-        explore = 0.18 if n == 0 else 0.0
-        boost = FOCUS_BOOSTS.get(tag, 0.0)
-        w = 0.20 + weakness + explore + boost
-        weights.append((tag, w))
-
-    total = sum(w for _, w in weights)
-    r = random.random() * total
-    upto = 0.0
-    for tag, w in weights:
-        upto += w
-        if upto >= r:
-            return tag
-    return weights[-1][0]
+    return weighted_pick_tag(
+        state,
+        allowed_tags,
+        default_acc=DEFAULT_ACC,
+        default_rt=DEFAULT_RT,
+        rt_good=3.0,
+        rt_bad=14.0,
+        base_weight=0.20,
+        explore_bonus=0.18,
+        focus_boosts=FOCUS_BOOSTS,
+    )
 
 
 def add_tags_from_text(sentence: str) -> List[str]:
@@ -229,7 +194,13 @@ def make_word_item(target_tag: str) -> WritingItem:
         candidates = WORD_DRILLS[:]
     word, tags = random.choice(candidates)
     merged = list(sorted(set(tags + [target_tag])))
-    return WritingItem(prompt=word, target=word, tags=merged, kind="word")
+    return WritingItem(
+        instruction="Schreibe das Wort richtig:",
+        prompt=word,
+        target=word,
+        tags=merged,
+        kind="copy_word",
+    )
 
 
 def make_sentence() -> str:
@@ -239,22 +210,22 @@ def make_sentence() -> str:
         subj = random.choice(NOUNS)
         verb = random.choice(VERBS_SG)
         prep = random.choice(PREP_PHRASES)
-        return f"{subj} {verb} {prep}."
+        return capitalize_sentence_start(f"{subj} {verb} {prep}.")
 
     if pattern == 2:
         subj = random.choice(NOUNS_PL)
         verb = random.choice(VERBS_PL)
         obj = random.choice(OBJECTS)
-        return f"{subj} {verb} {obj}."
+        return capitalize_sentence_start(f"{subj} {verb} {obj}.")
 
     if pattern == 3:
         subj = random.choice(NOUNS)
         verb = random.choice(VERBS_SG)
         adj = random.choice(ADJECTIVES)
-        return f"{subj} ist {adj}."
+        return capitalize_sentence_start(f"{subj} ist {adj}.")
 
     if pattern == 4:
-        first = f"{random.choice(NOUNS)} {random.choice(VERBS_SG)}."
+        first = capitalize_sentence_start(f"{random.choice(NOUNS)} {random.choice(VERBS_SG)}.")
         second = f"{random.choice(CONNECTORS).capitalize()} {random.choice(NOUNS_PL)} {random.choice(VERBS_PL)}."
         return f"{first} {second}"
 
@@ -262,7 +233,14 @@ def make_sentence() -> str:
     verb = random.choice(VERBS_PL)
     prep = random.choice(PREP_PHRASES)
     obj = random.choice(OBJECTS)
-    return f"{subj} {verb} {prep} und tragen {obj}."
+    return capitalize_sentence_start(f"{subj} {verb} {prep} und tragen {obj}.")
+
+
+def capitalize_sentence_start(s: str) -> str:
+    s = to_nfc(s)
+    if not s:
+        return s
+    return s[0].upper() + s[1:]
 
 
 def make_sentence_item(target_tag: str) -> WritingItem:
@@ -270,22 +248,109 @@ def make_sentence_item(target_tag: str) -> WritingItem:
         sentence = make_sentence()
         tags = add_tags_from_text(sentence)
         if target_tag in tags:
-            return WritingItem(prompt=sentence, target=sentence, tags=tags, kind="sentence")
+            return WritingItem(
+                instruction="Schreibe den Satz korrekt ab:",
+                prompt=sentence,
+                target=sentence,
+                tags=tags,
+                kind="copy_sentence",
+            )
         if random.random() < 0.10:
-            return WritingItem(prompt=sentence, target=sentence, tags=tags, kind="sentence")
+            return WritingItem(
+                instruction="Schreibe den Satz korrekt ab:",
+                prompt=sentence,
+                target=sentence,
+                tags=tags,
+                kind="copy_sentence",
+            )
 
     sentence = make_sentence()
     tags = add_tags_from_text(sentence)
-    return WritingItem(prompt=sentence, target=sentence, tags=tags, kind="sentence")
+    return WritingItem(
+        instruction="Schreibe den Satz korrekt ab:",
+        prompt=sentence,
+        target=sentence,
+        tags=tags,
+        kind="copy_sentence",
+    )
+
+
+def make_fill_blank_item(target_tag: str) -> WritingItem:
+    # Curated templates: exactly one missing word with an unambiguous expected answer.
+    templates = [
+        # noun capitalization
+        ("Im Satz fehlt das Nomen. Setze es ein:", "Die ____ spielt im Garten.", "Katze", ["noun_cap"]),
+        ("Im Satz fehlt das Nomen. Setze es ein:", "Der ____ fährt schnell.", "Zug", ["noun_cap", "ie_ei"]),
+        # verb ending / grammar
+        ("Setze die richtige Verbform ein:", "Die Kinder ____ im Park.", "spielen", ["verb_end"]),
+        ("Setze die richtige Verbform ein:", "Der Hund ____ im Haus.", "schläft", ["verb_end", "umlaut_esz"]),
+        # clusters sch/ch
+        ("Setze das fehlende Wort ein:", "Die ____ ist lang.", "Schiene", ["cluster_sch_ch", "noun_cap", "ie_ei"]),
+        ("Setze das fehlende Wort ein:", "Wir ____ heute ein Bild.", "zeichnen", ["cluster_sch_ch", "verb_end"]),
+        # doubled consonants
+        ("Setze das fehlende Wort ein:", "Wir ____ zum Bus.", "rennen", ["double_consonant", "verb_end"]),
+        ("Setze das fehlende Wort ein:", "Die Kinder ____ im Wasser.", "schwimmen", ["double_consonant", "cluster_sch_ch", "verb_end"]),
+        # umlaut/ß
+        ("Setze das fehlende Wort ein:", "Die Straße ist ____ .", "groß", ["umlaut_esz"]),
+        ("Setze das fehlende Wort ein:", "Das Mädchen ist ____ .", "müde", ["umlaut_esz"]),
+    ]
+
+    targeted = [tpl for tpl in templates if target_tag in tpl[3]]
+    pool = targeted if targeted else templates
+    instruction, prompt, answer, base_tags = random.choice(pool)
+    tags = list(sorted(set(base_tags + [target_tag, "sentence_flow", "punct"])))
+    return WritingItem(
+        instruction=instruction,
+        prompt=prompt,
+        target=answer,
+        tags=tags,
+        kind="fill_blank",
+    )
+
+
+def make_question_item(target_tag: str) -> WritingItem:
+    subj = random.choice(NOUNS)
+    verb = random.choice(VERBS_SG)
+    place = random.choice(PREP_PHRASES)
+    obj = random.choice(OBJECTS)
+    sentence = capitalize_sentence_start(f"{subj} {verb} {place} und findet {obj}.")
+
+    q_type = random.choice(["wer", "wo", "was"])
+    if q_type == "wer":
+        question = "Frage: Wer handelt im Satz?"
+        answer = subj
+    elif q_type == "wo":
+        question = "Frage: Wo passiert es?"
+        answer = place
+    else:
+        question = "Frage: Was wird gefunden?"
+        answer = obj
+
+    prompt = f"{sentence}\n{question}"
+    tags = add_tags_from_text(sentence)
+    tags = list(sorted(set(tags + [target_tag, "sentence_flow"])))
+    return WritingItem(
+        instruction="Lies und beantworte die Frage:",
+        prompt=prompt,
+        target=answer,
+        tags=tags,
+        kind="question",
+    )
 
 
 def pick_next_item(state: Dict[str, Any], difficulty: float) -> WritingItem:
     target = pick_target_tag(state, ALLOWED_TAGS)
+    p_copy_word = clamp(0.22 - 0.08 * difficulty, 0.10, 0.22)
+    p_fill_blank = clamp(0.38 + 0.08 * difficulty, 0.38, 0.50)
+    p_question = clamp(0.28 + 0.12 * difficulty, 0.28, 0.44)
 
-    # More sentence practice as difficulty grows, but keep word drills for orthography repair.
-    p_word = clamp(0.55 - 0.35 * difficulty, 0.18, 0.55)
-    if random.random() < p_word:
+    r = random.random()
+    if r < p_copy_word:
         return make_word_item(target)
+    if r < p_copy_word + p_fill_blank:
+        return make_fill_blank_item(target)
+    if r < p_copy_word + p_fill_blank + p_question:
+        return make_question_item(target)
     return make_sentence_item(target)
 
 
@@ -302,9 +367,72 @@ def draw_progress_bar(surface, rect: pygame.Rect, frac_0_1: float):
 
 
 def render_center(screen, font, text, y, color):
-    surf = font.render(text, True, color)
+    surf = font.render(to_nfc(text), True, color)
     rect = surf.get_rect(center=(screen.get_width() // 2, y))
     screen.blit(surf, rect)
+
+
+def wrap_text(font, text: str, max_width: int) -> List[str]:
+    text = to_nfc(text)
+    lines: List[str] = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+
+        line = words[0]
+        for word in words[1:]:
+            trial = f"{line} {word}"
+            if font.size(trial)[0] <= max_width:
+                line = trial
+            else:
+                lines.append(line)
+                line = word
+        lines.append(line)
+    return lines
+
+
+def render_wrapped_center(screen, font, text: str, y_center: int, color, max_width: int, line_gap: int = 8):
+    lines = wrap_text(font, text, max_width)
+    line_h = font.get_linesize() + line_gap
+    total_h = line_h * len(lines)
+    start_y = y_center - (total_h // 2) + (line_h // 2)
+    for i, line in enumerate(lines):
+        render_center(screen, font, line, start_y + i * line_h, color)
+
+
+def render_wrapped_block(
+    screen,
+    font,
+    text: str,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    color,
+    line_gap: int = 8,
+):
+    lines = wrap_text(font, text, w - 20)
+    line_h = font.get_linesize() + line_gap
+    max_lines = max(1, h // line_h)
+    lines = lines[:max_lines]
+
+    y_cur = y + 10
+    for line in lines:
+        surf = font.render(to_nfc(line), True, color)
+        rect = surf.get_rect(midtop=(x + w // 2, y_cur))
+        screen.blit(surf, rect)
+        y_cur += line_h
+
+
+def pick_unicode_font(size: int):
+    # Prefer fonts that reliably render German umlauts/ß as single glyphs.
+    for name in ("DejaVu Sans", "Noto Sans", "Arial", "Liberation Sans"):
+        f = pygame.font.SysFont(name, size)
+        if f is not None:
+            return f
+    return pygame.font.SysFont(None, size)
 
 
 def main():
@@ -318,10 +446,10 @@ def main():
     clock = pygame.time.Clock()
 
     base = max(24, min(w, h) // 11)
-    font_task = pygame.font.SysFont(None, int(base * 1.2))
-    font_input = pygame.font.SysFont(None, int(base * 1.0))
-    font_hint = pygame.font.SysFont(None, int(base * 0.40))
-    font_small = pygame.font.SysFont(None, int(base * 0.32))
+    font_task = pick_unicode_font(int(base * 1.2))
+    font_input = pick_unicode_font(int(base * 1.0))
+    font_hint = pick_unicode_font(int(base * 0.40))
+    font_small = pick_unicode_font(int(base * 0.32))
 
     session_id = f"german_{int(now_ts())}"
     session_base_difficulty = clamp(float(state["difficulty"]) - WARMUP_DIFFICULTY_OFFSET, 0.0, 1.0)
@@ -413,21 +541,21 @@ def main():
                             item_solved = True
                             solved_count += 1
                             state["total_questions_seen"] = int(state["total_questions_seen"]) + 1
-                            update_tag_stats(state, item.tags, correct=True, rt=rt)
-                            update_overall_difficulty(state)
+                            update_tag_stats(state, item.tags, correct=True, rt=rt, tag_window=TAG_WINDOW)
+                            update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=14.0, smooth_old=0.90, smooth_new=0.10)
                     else:
                         feedback = "wrong"
                         feedback_since = now_ts()
                         log_attempt(False, user_text, rt)
-                        update_tag_stats(state, item.tags, correct=False, rt=rt)
-                        update_overall_difficulty(state)
+                        update_tag_stats(state, item.tags, correct=False, rt=rt, tag_window=TAG_WINDOW)
+                        update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=14.0, smooth_old=0.90, smooth_new=0.10)
 
                 elif event.key == pygame.K_BACKSPACE:
                     user_text = user_text[:-1]
                 else:
                     if len(user_text) < MAX_INPUT_CHARS:
                         if event.unicode and event.unicode.isprintable() and event.unicode not in ("\r", "\n"):
-                            user_text += event.unicode
+                            user_text = to_nfc(user_text + event.unicode)
 
         if not completed and feedback == "correct":
             if now_ts() - feedback_since >= CORRECT_PAUSE_SECONDS:
@@ -454,7 +582,27 @@ def main():
             bar_rect = pygame.Rect(int(w * 0.10), int(h * 0.90), int(w * 0.80), int(h * 0.05))
             draw_progress_bar(screen, bar_rect, 1.0)
         else:
-            render_center(screen, font_task, item.prompt, int(h * 0.38), (240, 240, 240))
+            prompt_rect = pygame.Rect(int(w * 0.08), int(h * 0.16), int(w * 0.84), int(h * 0.30))
+            input_rect = pygame.Rect(int(w * 0.08), int(h * 0.52), int(w * 0.84), int(h * 0.24))
+            feedback_y = input_rect.bottom + int(h * 0.03)
+
+            pygame.draw.rect(screen, (18, 18, 26), prompt_rect, border_radius=12)
+            pygame.draw.rect(screen, (45, 45, 62), prompt_rect, width=2, border_radius=12)
+            pygame.draw.rect(screen, (18, 18, 26), input_rect, border_radius=12)
+            pygame.draw.rect(screen, (45, 45, 62), input_rect, width=2, border_radius=12)
+
+            render_center(screen, font_hint, item.instruction, int(h * 0.12), (190, 190, 205))
+
+            render_wrapped_block(
+                screen,
+                font_task,
+                item.prompt,
+                prompt_rect.x,
+                prompt_rect.y,
+                prompt_rect.width,
+                prompt_rect.height,
+                (240, 240, 240),
+            )
 
             if feedback == "correct":
                 input_color = (80, 220, 120)
@@ -464,12 +612,21 @@ def main():
                 input_color = (230, 230, 230)
 
             shown_input = user_text if user_text else " "
-            render_center(screen, font_input, shown_input, int(h * 0.53), input_color)
+            render_wrapped_block(
+                screen,
+                font_input,
+                shown_input,
+                input_rect.x,
+                input_rect.y,
+                input_rect.width,
+                input_rect.height,
+                input_color,
+            )
 
             if feedback == "wrong":
-                render_center(screen, font_hint, "Try again", int(h * 0.63), (240, 90, 90))
+                render_center(screen, font_hint, "Try again", feedback_y, (240, 90, 90))
             elif feedback == "correct":
-                render_center(screen, font_hint, "Correct", int(h * 0.63), (80, 220, 120))
+                render_center(screen, font_hint, "Correct", feedback_y, (80, 220, 120))
 
             frac = q_index / SESSION_QUESTIONS
             bar_rect = pygame.Rect(int(w * 0.10), int(h * 0.90), int(w * 0.80), int(h * 0.05))

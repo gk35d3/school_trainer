@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pygame
 
+from adaptive_core import build_state_from_events, clamp, update_overall_difficulty, update_tag_stats, weighted_pick_tag
 from trainer_data import append_event, load_recent_events, now_ts
 
 # =========================
@@ -36,59 +37,24 @@ FOCUS_BOOSTS = {
 # =========================
 # Helpers
 # =========================
-def clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
-
-
-def update_tag_stats(state: Dict[str, Any], tags: List[str], correct: bool, rt: float) -> None:
-    for tag in tags:
-        t = state["tags"].setdefault(tag, {"attempts": []})
-        t["attempts"].append({"correct": bool(correct), "rt": float(rt), "ts": now_ts()})
-        if len(t["attempts"]) > TAG_WINDOW:
-            t["attempts"] = t["attempts"][-TAG_WINDOW:]
-
-
-def tag_metrics(state: Dict[str, Any], tag: str) -> Tuple[float, float, int]:
-    t = state["tags"].get(tag, {}).get("attempts", [])
-    n = len(t)
-    if n == 0:
-        return (0.60, 9.0, 0)
-    acc = sum(1 for a in t if a.get("correct")) / n
-    avg_rt = sum(a.get("rt", 9.0) for a in t) / n
-    return (acc, avg_rt, n)
-
-
-def update_overall_difficulty(state: Dict[str, Any]) -> None:
-    tags = list(state["tags"].keys())
-    if not tags:
-        return
-
-    scores = []
-    for tag in tags:
-        acc, avg_rt, n = tag_metrics(state, tag)
-        rt_norm = clamp((avg_rt - 3.0) / 9.0, 0.0, 1.0)
-        score = (acc * 0.75) + ((1.0 - rt_norm) * 0.25)
-        scores.append((score, n ** 0.5))
-
-    total_w = sum(w for _, w in scores) or 1.0
-    overall_score = sum(s * w for s, w in scores) / total_w
-    target = clamp((overall_score - 0.50) / 0.50, 0.0, 1.0)
-    state["difficulty"] = clamp(0.90 * float(state["difficulty"]) + 0.10 * target, 0.0, 1.0)
+DEFAULT_ACC = 0.60
+DEFAULT_RT = 9.0
 
 
 def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    state: Dict[str, Any] = {"difficulty": 0.15, "total_questions_seen": 0, "tags": {}}
-    for ev in events:
-        if ev.get("app") != APP_ID or ev.get("type") != "attempt":
-            continue
-        tags = ev.get("tags") or []
-        correct = bool(ev.get("correct", False))
-        rt = float(ev.get("rt", 9.0))
-        update_tag_stats(state, tags, correct, rt)
-        if correct:
-            state["total_questions_seen"] = int(state["total_questions_seen"]) + 1
-    update_overall_difficulty(state)
-    return state
+    return build_state_from_events(
+        events,
+        app_id=APP_ID,
+        initial_difficulty=0.15,
+        default_acc=DEFAULT_ACC,
+        default_rt=DEFAULT_RT,
+        tag_window=TAG_WINDOW,
+        rt_good=3.0,
+        rt_bad=12.0,
+        smooth_old=0.90,
+        smooth_new=0.10,
+        total_seen_key="total_questions_seen",
+    )
 
 
 # =========================
@@ -156,24 +122,17 @@ def choose_op(difficulty: float) -> str:
 
 
 def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
-    weights = []
-    for tag in allowed_tags:
-        acc, avg_rt, n = tag_metrics(state, tag)
-        rt_norm = clamp((avg_rt - 3.0) / 9.0, 0.0, 1.0)
-        weakness = (1.0 - acc) * 0.7 + rt_norm * 0.3
-        explore = 0.15 if n == 0 else 0.0
-        boost = FOCUS_BOOSTS.get(tag, 0.0)
-        w = 0.20 + weakness + explore + boost
-        weights.append((tag, w))
-
-    total = sum(w for _, w in weights)
-    r = random.random() * total
-    upto = 0.0
-    for tag, w in weights:
-        upto += w
-        if upto >= r:
-            return tag
-    return weights[-1][0]
+    return weighted_pick_tag(
+        state,
+        allowed_tags,
+        default_acc=DEFAULT_ACC,
+        default_rt=DEFAULT_RT,
+        rt_good=3.0,
+        rt_bad=12.0,
+        base_weight=0.20,
+        explore_bonus=0.15,
+        focus_boosts=FOCUS_BOOSTS,
+    )
 
 
 def difficulty_to_limits(difficulty: float) -> Dict[str, Any]:
@@ -413,8 +372,8 @@ def main():
                         feedback = "wrong"
                         feedback_since = now_ts()
                         log_attempt(False, user_text, rt)
-                        update_tag_stats(state, problem.tags, correct=False, rt=rt)
-                        update_overall_difficulty(state)
+                        update_tag_stats(state, problem.tags, correct=False, rt=rt, tag_window=TAG_WINDOW)
+                        update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=12.0, smooth_old=0.90, smooth_new=0.10)
                         continue
 
                     if val == problem.answer:
@@ -425,14 +384,14 @@ def main():
                         if not problem_solved:
                             problem_solved = True
                             state["total_questions_seen"] = int(state["total_questions_seen"]) + 1
-                            update_tag_stats(state, problem.tags, correct=True, rt=rt)
-                            update_overall_difficulty(state)
+                            update_tag_stats(state, problem.tags, correct=True, rt=rt, tag_window=TAG_WINDOW)
+                            update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=12.0, smooth_old=0.90, smooth_new=0.10)
                     else:
                         feedback = "wrong"
                         feedback_since = now_ts()
                         log_attempt(False, user_text, rt)
-                        update_tag_stats(state, problem.tags, correct=False, rt=rt)
-                        update_overall_difficulty(state)
+                        update_tag_stats(state, problem.tags, correct=False, rt=rt, tag_window=TAG_WINDOW)
+                        update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=12.0, smooth_old=0.90, smooth_new=0.10)
 
                 elif event.key == pygame.K_BACKSPACE:
                     user_text = user_text[:-1]

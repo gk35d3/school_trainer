@@ -4,10 +4,12 @@ from typing import Any, Dict, List, Tuple
 from trainer_data import now_ts
 
 
+# Objective: Keep values within a closed numeric range.
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+# Objective: Record one attempt for each tag while capping history size.
 def update_tag_stats(state: Dict[str, Any], tags: List[str], correct: bool, rt: float, tag_window: int) -> None:
     for tag in tags:
         t = state["tags"].setdefault(tag, {"attempts": []})
@@ -16,6 +18,7 @@ def update_tag_stats(state: Dict[str, Any], tags: List[str], correct: bool, rt: 
             t["attempts"] = t["attempts"][-tag_window:]
 
 
+# Objective: Compute accuracy and mean response time for one skill tag.
 def tag_metrics(state: Dict[str, Any], tag: str, default_acc: float, default_rt: float) -> Tuple[float, float, int]:
     t = state["tags"].get(tag, {}).get("attempts", [])
     n = len(t)
@@ -26,6 +29,7 @@ def tag_metrics(state: Dict[str, Any], tag: str, default_acc: float, default_rt:
     return (acc, avg_rt, n)
 
 
+# Objective: Convert tag-level performance into one smooth global difficulty.
 def update_overall_difficulty(
     state: Dict[str, Any],
     *,
@@ -53,6 +57,7 @@ def update_overall_difficulty(
     state["difficulty"] = clamp(smooth_old * float(state["difficulty"]) + smooth_new * target, 0.0, 1.0)
 
 
+# Objective: Reconstruct adaptive state from shared JSONL attempt events.
 def build_state_from_events(
     events: List[Dict[str, Any]],
     *,
@@ -90,6 +95,7 @@ def build_state_from_events(
     return state
 
 
+# Objective: Pick the next practice tag with weakness + exploration weighting.
 def weighted_pick_tag(
     state: Dict[str, Any],
     allowed_tags: List[str],

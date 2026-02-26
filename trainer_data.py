@@ -8,16 +8,19 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_PATH = os.path.join(APP_DIR, "trainer_data.jsonl")
 
 
+# Objective: Provide a shared monotonic timestamp source for log records.
 def now_ts() -> float:
     return time.time()
 
 
+# Objective: Ensure the shared JSONL data file exists before reading/writing.
 def ensure_data_file() -> None:
     if not os.path.exists(DATA_PATH):
         with open(DATA_PATH, "a", encoding="utf-8"):
             pass
 
 
+# Objective: Append one JSON event line to the shared data stream.
 def append_event(event: Dict[str, Any]) -> None:
     ensure_data_file()
     record = dict(event)
@@ -26,6 +29,7 @@ def append_event(event: Dict[str, Any]) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+# Objective: Load recent valid JSON events, trimming very old lines for speed.
 def load_recent_events(max_lines: int = 5000) -> List[Dict[str, Any]]:
     ensure_data_file()
     lines: Deque[str] = deque(maxlen=max_lines)

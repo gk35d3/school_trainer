@@ -1,7 +1,7 @@
 import random
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pygame
 
@@ -11,6 +11,7 @@ from trainer_data import append_event, load_recent_events, now_ts
 # =========================
 # Config
 # =========================
+# Objective: Configure German session timing and adaptive behavior.
 FPS = 60
 SESSION_QUESTIONS = 40
 CORRECT_PAUSE_SECONDS = 0.6
@@ -42,14 +43,17 @@ FOCUS_BOOSTS = {
 # =========================
 # Helpers
 # =========================
+# Objective: Set prior defaults for unseen German skill tags.
 DEFAULT_ACC = 0.58
 DEFAULT_RT = 10.0
 
 
+# Objective: Normalize composed/decomposed unicode into a stable form.
 def to_nfc(s: str) -> str:
     return unicodedata.normalize("NFC", s)
 
 
+# Objective: Normalize learner input/target text before strict comparison.
 def normalize_text(s: str) -> str:
     s = to_nfc(s).strip()
     if NORMALIZE_MULTI_SPACES:
@@ -57,10 +61,12 @@ def normalize_text(s: str) -> str:
     return s
 
 
+# Objective: Perform normalized exact-match checking.
 def is_match(typed: str, target: str) -> bool:
     return normalize_text(typed) == normalize_text(target)
 
 
+# Objective: Rebuild German adaptive state from shared JSONL attempts.
 def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     return build_state_from_events(
         events,
@@ -80,6 +86,7 @@ def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 # =========================
 # Content model
 # =========================
+# Objective: Represent one German exercise item and expected answer.
 @dataclass
 class WritingItem:
     instruction: str
@@ -150,6 +157,7 @@ ALLOWED_TAGS = [
 ]
 
 
+# Objective: Select the next weakest orthography/grammar tag.
 def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     return weighted_pick_tag(
         state,
@@ -164,6 +172,7 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     )
 
 
+# Objective: Infer orthography/grammar tags directly from sentence text.
 def add_tags_from_text(sentence: str) -> List[str]:
     tags: List[str] = ["sentence_flow", "punct"]
 
@@ -188,6 +197,7 @@ def add_tags_from_text(sentence: str) -> List[str]:
     return list(sorted(set(tags)))
 
 
+# Objective: Build focused single-word spelling tasks.
 def make_word_item(target_tag: str) -> WritingItem:
     candidates = [(w, t) for (w, t) in WORD_DRILLS if target_tag in t]
     if not candidates:
@@ -203,6 +213,7 @@ def make_word_item(target_tag: str) -> WritingItem:
     )
 
 
+# Objective: Generate broad sentence variants for copy/comprehension tasks.
 def make_sentence() -> str:
     pattern = random.randint(1, 5)
 
@@ -236,6 +247,7 @@ def make_sentence() -> str:
     return capitalize_sentence_start(f"{subj} {verb} {prep} und tragen {obj}.")
 
 
+# Objective: Guarantee sentence-initial capitalization.
 def capitalize_sentence_start(s: str) -> str:
     s = to_nfc(s)
     if not s:
@@ -243,6 +255,7 @@ def capitalize_sentence_start(s: str) -> str:
     return s[0].upper() + s[1:]
 
 
+# Objective: Build sentence-copy tasks aligned to target tags.
 def make_sentence_item(target_tag: str) -> WritingItem:
     for _ in range(140):
         sentence = make_sentence()
@@ -275,6 +288,7 @@ def make_sentence_item(target_tag: str) -> WritingItem:
     )
 
 
+# Objective: Build unambiguous one-word gap-fill tasks.
 def make_fill_blank_item(target_tag: str) -> WritingItem:
     # Curated templates: exactly one missing word with an unambiguous expected answer.
     templates = [
@@ -308,6 +322,7 @@ def make_fill_blank_item(target_tag: str) -> WritingItem:
     )
 
 
+# Objective: Build short comprehension questions from generated text.
 def make_question_item(target_tag: str) -> WritingItem:
     subj = random.choice(NOUNS)
     verb = random.choice(VERBS_SG)
@@ -338,6 +353,7 @@ def make_question_item(target_tag: str) -> WritingItem:
     )
 
 
+# Objective: Mix exercise modes while keeping weakness targeting.
 def pick_next_item(state: Dict[str, Any], difficulty: float) -> WritingItem:
     target = pick_target_tag(state, ALLOWED_TAGS)
     p_copy_word = clamp(0.22 - 0.08 * difficulty, 0.10, 0.22)
@@ -357,6 +373,7 @@ def pick_next_item(state: Dict[str, Any], difficulty: float) -> WritingItem:
 # =========================
 # UI
 # =========================
+# Objective: Render a shared progress bar style for German mode.
 def draw_progress_bar(surface, rect: pygame.Rect, frac_0_1: float):
     pygame.draw.rect(surface, (30, 30, 40), rect, border_radius=10)
     inner = rect.inflate(-6, -6)
@@ -366,12 +383,14 @@ def draw_progress_bar(surface, rect: pygame.Rect, frac_0_1: float):
     pygame.draw.rect(surface, (70, 70, 90), rect, width=2, border_radius=10)
 
 
+# Objective: Draw one centered text line.
 def render_center(screen, font, text, y, color):
     surf = font.render(to_nfc(text), True, color)
     rect = surf.get_rect(center=(screen.get_width() // 2, y))
     screen.blit(surf, rect)
 
 
+# Objective: Wrap text by visual width while respecting explicit newlines.
 def wrap_text(font, text: str, max_width: int) -> List[str]:
     text = to_nfc(text)
     lines: List[str] = []
@@ -393,15 +412,7 @@ def wrap_text(font, text: str, max_width: int) -> List[str]:
     return lines
 
 
-def render_wrapped_center(screen, font, text: str, y_center: int, color, max_width: int, line_gap: int = 8):
-    lines = wrap_text(font, text, max_width)
-    line_h = font.get_linesize() + line_gap
-    total_h = line_h * len(lines)
-    start_y = y_center - (total_h // 2) + (line_h // 2)
-    for i, line in enumerate(lines):
-        render_center(screen, font, line, start_y + i * line_h, color)
-
-
+# Objective: Draw wrapped multi-line text inside a bounded rectangle.
 def render_wrapped_block(
     screen,
     font,
@@ -426,6 +437,7 @@ def render_wrapped_block(
         y_cur += line_h
 
 
+# Objective: Pick a font with robust umlaut/ß rendering.
 def pick_unicode_font(size: int):
     # Prefer fonts that reliably render German umlauts/ß as single glyphs.
     for name in ("DejaVu Sans", "Noto Sans", "Arial", "Liberation Sans"):
@@ -435,6 +447,7 @@ def pick_unicode_font(size: int):
     return pygame.font.SysFont(None, size)
 
 
+# Objective: Run one adaptive fullscreen German training session.
 def main():
     events = load_recent_events()
     state = build_state_from_log(events)

@@ -1,6 +1,6 @@
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pygame
 
@@ -10,6 +10,7 @@ from trainer_data import append_event, load_recent_events, now_ts
 # =========================
 # Config
 # =========================
+# Objective: Define session pacing and adaptive-tuning constants.
 FPS = 60
 SESSION_QUESTIONS = 40
 CORRECT_PAUSE_SECONDS = 0.6
@@ -37,10 +38,12 @@ FOCUS_BOOSTS = {
 # =========================
 # Helpers
 # =========================
+# Objective: Configure default prior estimates for unseen tags.
 DEFAULT_ACC = 0.60
 DEFAULT_RT = 9.0
 
 
+# Objective: Rebuild math state from the shared event log.
 def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     return build_state_from_events(
         events,
@@ -60,6 +63,7 @@ def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 # =========================
 # Problem model + tagging
 # =========================
+# Objective: Represent one generated arithmetic task.
 @dataclass
 class Problem:
     a: int
@@ -72,22 +76,27 @@ class Problem:
         return self.a + self.b if self.op == "+" else self.a - self.b
 
 
+# Objective: Detect whether addition crosses the next ten.
 def is_crossing_10_add(a: int, b: int) -> bool:
     return (a % 10) + (b % 10) >= 10
 
 
+# Objective: Detect carry in ones column for two-digit addition.
 def is_carry_add(a: int, b: int) -> bool:
     return a >= 10 and b >= 10 and (a % 10) + (b % 10) >= 10
 
 
+# Objective: Detect borrow in ones column for two-digit subtraction.
 def is_borrow_sub(a: int, b: int) -> bool:
     return a >= 10 and b >= 10 and (a % 10) < (b % 10)
 
 
+# Objective: Detect multiples of ten for tens-focused practice.
 def is_tens(n: int) -> bool:
     return n % 10 == 0
 
 
+# Objective: Assign granular skill tags to each generated problem.
 def assign_tags(a: int, b: int, op: str) -> List[str]:
     tags: List[str] = []
     if op == "+":
@@ -116,11 +125,13 @@ def assign_tags(a: int, b: int, op: str) -> List[str]:
 # =========================
 # Generation
 # =========================
+# Objective: Balance addition vs subtraction by current difficulty.
 def choose_op(difficulty: float) -> str:
     p_sub = 0.25 + 0.35 * difficulty
     return "-" if random.random() < p_sub else "+"
 
 
+# Objective: Select the next weakness tag to practice.
 def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     return weighted_pick_tag(
         state,
@@ -135,6 +146,7 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     )
 
 
+# Objective: Translate abstract difficulty into numeric operand limits.
 def difficulty_to_limits(difficulty: float) -> Dict[str, Any]:
     max_small = int(8 + 22 * difficulty)
     max_mid = int(18 + 60 * difficulty)
@@ -148,6 +160,7 @@ def difficulty_to_limits(difficulty: float) -> Dict[str, Any]:
     }
 
 
+# Objective: Generate a child-friendly problem aligned to a target tag.
 def make_problem_for_target(difficulty: float, target_tag: str) -> Problem:
     limits = difficulty_to_limits(difficulty)
     max_small = limits["max_small"]
@@ -238,6 +251,7 @@ def make_problem_for_target(difficulty: float, target_tag: str) -> Problem:
     return Problem(a=a, b=b, op=op, tags=assign_tags(a, b, op))
 
 
+# Objective: Gate which tags are eligible at each difficulty range.
 def allowed_tags_for_difficulty(difficulty: float) -> List[str]:
     tags = ["add_small", "sub_small", "tens", "add_cross10", "add_two_digit", "sub_two_digit"]
     if difficulty >= 0.30:
@@ -257,6 +271,7 @@ def allowed_tags_for_difficulty(difficulty: float) -> List[str]:
 # =========================
 # UI
 # =========================
+# Objective: Render a consistent progress bar used by the session UI.
 def draw_progress_bar(surface, rect: pygame.Rect, frac_0_1: float):
     pygame.draw.rect(surface, (30, 30, 40), rect, border_radius=10)
     inner = rect.inflate(-6, -6)
@@ -266,6 +281,7 @@ def draw_progress_bar(surface, rect: pygame.Rect, frac_0_1: float):
     pygame.draw.rect(surface, (70, 70, 90), rect, width=2, border_radius=10)
 
 
+# Objective: Append digit keys (including numpad) to input text.
 def digits_only_append(user_text: str, key: int) -> str:
     if pygame.K_0 <= key <= pygame.K_9:
         return user_text + chr(key)
@@ -274,6 +290,7 @@ def digits_only_append(user_text: str, key: int) -> str:
     return user_text
 
 
+# Objective: Run one adaptive fullscreen math training session.
 def main():
     events = load_recent_events()
     state = build_state_from_log(events)

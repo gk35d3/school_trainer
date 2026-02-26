@@ -49,84 +49,84 @@ DEFAULT_RT = 10.0
 QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Bienen?",
-        "keyword_groups": [["bienen"], ["fliegen", "summen", "sammeln", "tanzen", "suchen", "tragen"]],
+        "subject_keywords": ["bienen"],
         "tags": ["noun_cap", "verb_end", "sentence_flow", "punct"],
         "example": "Bienen fliegen und sammeln Nektar.",
         "level": 1,
     },
     {
         "question": "Was macht ein Hund im Park?",
-        "keyword_groups": [["hund"], ["läuft", "springt", "spielt", "rennt", "schnüffelt", "bellt"]],
+        "subject_keywords": ["hund"],
         "tags": ["noun_cap", "verb_end", "double_consonant", "punct"],
         "example": "Ein Hund läuft und spielt im Park.",
         "level": 1,
     },
     {
         "question": "Was machen Kinder in der Schule?",
-        "keyword_groups": [["kinder"], ["lernen", "lesen", "schreiben", "rechnen", "malen", "üben"]],
+        "subject_keywords": ["kinder"],
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
         "example": "Kinder lernen, lesen und schreiben in der Schule.",
         "level": 2,
     },
     {
         "question": "Wie ist die Straße nach dem Regen?",
-        "keyword_groups": [["straße"], ["nass", "glatt", "rutschig"]],
+        "subject_keywords": ["straße"],
         "tags": ["noun_cap", "umlaut_esz", "punct", "sentence_flow"],
         "example": "Die Straße ist nass und glatt.",
         "level": 2,
     },
     {
         "question": "Was machen Vögel am Morgen?",
-        "keyword_groups": [["vögel"], ["fliegen", "singen", "rufen", "suchen", "bauen"]],
+        "subject_keywords": ["vögel"],
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "punct"],
         "example": "Vögel fliegen und singen am Morgen.",
         "level": 2,
     },
     {
         "question": "Was macht die Katze in der Nacht?",
-        "keyword_groups": [["katze"], ["schleicht", "jagt", "läuft", "springt", "lauscht", "klettert"]],
+        "subject_keywords": ["katze"],
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
         "example": "Die Katze schleicht und jagt in der Nacht.",
         "level": 2,
     },
     {
         "question": "Was machen Feuerwehrleute bei einem Einsatz?",
-        "keyword_groups": [["feuerwehrleute"], ["löschen", "retten", "helfen", "fahren", "tragen"]],
+        "subject_keywords": ["feuerwehrleute"],
         "tags": ["noun_cap", "double_consonant", "verb_end", "sentence_flow", "punct"],
         "example": "Feuerwehrleute fahren schnell, löschen das Feuer und retten Menschen.",
         "level": 3,
     },
     {
         "question": "Was machen Forscher im Labor?",
-        "keyword_groups": [["forscher"], ["untersuchen", "messen", "testen", "beobachten", "notieren"]],
+        "subject_keywords": ["forscher"],
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "sentence_flow", "punct"],
         "example": "Forscher untersuchen Proben, messen Werte und notieren Ergebnisse.",
         "level": 3,
     },
     {
         "question": "Was machen Bauern auf dem Feld?",
-        "keyword_groups": [["bauern"], ["pflanzen", "ernten", "gießen", "fahren", "arbeiten"]],
+        "subject_keywords": ["bauern"],
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
         "example": "Bauern pflanzen Gemüse, gießen die Felder und ernten später.",
         "level": 3,
     },
     {
         "question": "Was machen Musiker vor einem Auftritt?",
-        "keyword_groups": [["musiker"], ["üben", "stimmen", "spielen", "proben", "hören"]],
+        "subject_keywords": ["musiker"],
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
         "example": "Musiker üben zusammen, stimmen ihre Instrumente und hören aufeinander.",
         "level": 4,
     },
     {
         "question": "Was machen Astronauten in einer Raumstation?",
-        "keyword_groups": [["astronauten"], ["forschen", "reparieren", "beobachten", "messen", "dokumentieren"]],
+        "subject_keywords": ["astronauten"],
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "sentence_flow", "punct"],
         "example": "Astronauten forschen, reparieren Geräte und beobachten die Erde.",
         "level": 4,
     },
     {
         "question": "Wie helfen Nachbarn einander nach einem Sturm?",
-        "keyword_groups": [["nachbarn"], ["helfen", "reparieren", "räumen", "teilen", "organisieren"]],
+        "subject_keywords": ["nachbarn"],
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
         "example": "Nachbarn helfen einander, räumen Wege frei und teilen Essen.",
         "level": 5,
@@ -212,13 +212,12 @@ def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 class WritingItem:
     instruction: str
     prompt: str
-    keyword_groups: List[List[str]]
+    subject_keywords: List[str]
     tags: List[str]
     kind: str
     example: str
     min_words: int
     min_verbs: int
-    require_connector: bool
     level: int
 
 
@@ -245,51 +244,41 @@ def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
         max_level = 1
         min_words = 3
         min_verbs = 1
-        require_connector = False
     elif difficulty < 0.40:
         min_level = 1
         max_level = 2
         min_words = 6
         min_verbs = 1
-        require_connector = False
     elif difficulty < 0.60:
         min_level = 2
         max_level = 3
         min_words = 8
         min_verbs = 2
-        require_connector = True
     elif difficulty < 0.80:
         min_level = 3
         max_level = 4
         min_words = 10
         min_verbs = 2
-        require_connector = True
     else:
         min_level = 4
         max_level = 5
         min_words = 12
         min_verbs = 3
-        require_connector = True
 
     candidates = [tpl for tpl in QUESTION_TEMPLATES if min_level <= tpl.get("level", 1) <= max_level]
     targeted = [tpl for tpl in candidates if target_tag in tpl["tags"]]
     tpl = random.choice(targeted if targeted else candidates)
-
-    if require_connector:
-        instruction = "Schreibe 1-2 Saetze mit Verbindung (z.B. und/aber/weil):"
-    else:
-        instruction = "Schreibe einen ganzen Antwortsatz (freie Form):"
+    instruction = "Schreibe einen ganzen Antwortsatz (freie Form):"
 
     return WritingItem(
         instruction=instruction,
         prompt=f"Frage: {tpl['question']}",
-        keyword_groups=tpl["keyword_groups"],
+        subject_keywords=tpl["subject_keywords"],
         tags=list(sorted(set(tpl["tags"] + [target_tag]))),
         kind="open_question",
         example=f"Beispiel: {tpl['example']}",
         min_words=min_words,
         min_verbs=min_verbs,
-        require_connector=require_connector,
         level=int(tpl.get("level", 1)),
     )
 
@@ -323,43 +312,31 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
         error_word_idxs.update(range(len(words)))
         issues.append(f"Antwort ist zu kurz (mindestens {item.min_words} Woerter)")
 
-    # Semantic + spelling anchors: each group needs at least one word.
-    for group in item.keyword_groups:
-        group_l = [g.lower() for g in group]
-        if any(g in words_lower for g in group_l):
-            continue
-
+    # Content anchor: subject noun from the question must appear.
+    subject_l = [s.lower() for s in item.subject_keywords]
+    if not any(s in words_lower for s in subject_l):
         best_idx = -1
         best_dist = 99
         best_target = ""
         for i, w in enumerate(words_lower):
-            for g in group_l:
-                d = levenshtein(w, g)
+            for s in subject_l:
+                d = levenshtein(w, s)
                 if d < best_dist:
                     best_dist = d
                     best_idx = i
-                    best_target = g
-
+                    best_target = s
         if best_idx >= 0 and best_dist <= 2:
             error_word_idxs.add(best_idx)
-            issues.append(f"Rechtschreibung prüfen: '{words[best_idx]}' (nahe bei '{best_target}')")
+            issues.append(f"Subjekt-Rechtschreibung prüfen: '{words[best_idx]}' (nahe bei '{best_target}')")
         else:
-            # No near-miss token -> likely missing concept in sentence.
             error_word_idxs.update(range(len(words)))
-            issues.append(f"Inhalt ergänzen: eines von {', '.join(group)}")
+            issues.append(f"Subjekt fehlt: {item.subject_keywords[0]}")
 
     # Grammar: ensure enough finite-looking verbs for the current level.
     verb_like = [w for w in words_lower if w.endswith(("t", "en"))]
     if len(verb_like) < item.min_verbs:
         error_word_idxs.update(range(len(words)))
         issues.append(f"Zu wenige Verben (mindestens {item.min_verbs})")
-
-    # Structure: require connector words at higher difficulty levels.
-    if item.require_connector:
-        connectors = {"und", "aber", "weil", "denn", "deshalb", "dann", "danach", "später"}
-        if not any(w in connectors for w in words_lower):
-            error_word_idxs.update(range(len(words)))
-            issues.append("Verbinde Gedanken mit und/aber/weil")
 
     ok = len(issues) == 0
     message = " | ".join(issues[:2]) if issues else ""
@@ -481,12 +458,31 @@ def render_answer_block(
 
 
 # Objective: Prefer fonts that render umlauts/ß correctly.
+FONT_CACHE: Dict[int, pygame.font.Font] = {}
+
+
 def pick_unicode_font(size: int):
+    if size in FONT_CACHE:
+        return FONT_CACHE[size]
     for name in ("DejaVu Sans", "Noto Sans", "Arial", "Liberation Sans"):
         f = pygame.font.SysFont(name, size)
         if f is not None:
+            FONT_CACHE[size] = f
             return f
-    return pygame.font.SysFont(None, size)
+    fallback = pygame.font.SysFont(None, size)
+    FONT_CACHE[size] = fallback
+    return fallback
+
+
+# Objective: Pick the largest font size that fits wrapped text into a box.
+def fit_font_for_box(text: str, base_size: int, min_size: int, box_w: int, box_h: int, line_gap: int = 8):
+    for size in range(base_size, min_size - 1, -1):
+        f = pick_unicode_font(size)
+        lines = wrap_text(f, text, box_w - 20)
+        line_h = f.get_linesize() + line_gap
+        if len(lines) * line_h <= box_h:
+            return f
+    return pick_unicode_font(min_size)
 
 
 # Objective: Run one adaptive fullscreen German training session.
@@ -501,8 +497,8 @@ def main():
     clock = pygame.time.Clock()
 
     base = max(24, min(w, h) // 11)
-    font_task = pick_unicode_font(int(base * 0.95))
-    font_input = pick_unicode_font(int(base * 0.82))
+    task_font_base = int(base * 0.95)
+    input_font_base = int(base * 0.82)
     font_hint = pick_unicode_font(int(base * 0.34))
     font_small = pick_unicode_font(int(base * 0.30))
 
@@ -664,7 +660,8 @@ def main():
         screen.fill((10, 10, 14))
 
         if completed:
-            render_center(screen, font_task, "SESSION COMPLETE", h // 2, (80, 220, 120))
+            done_font = pick_unicode_font(task_font_base)
+            render_center(screen, done_font, "SESSION COMPLETE", h // 2, (80, 220, 120))
             render_center(screen, font_hint, f"Solved: {solved_count}/{SESSION_QUESTIONS}", int(h * 0.60), (160, 160, 170))
             render_center(screen, font_hint, "ESC", int(h * 0.66), (160, 160, 170))
             bar_rect = pygame.Rect(int(w * 0.10), int(h * 0.90), int(w * 0.80), int(h * 0.05))
@@ -680,15 +677,18 @@ def main():
             pygame.draw.rect(screen, (45, 45, 62), input_rect, width=2, border_radius=12)
 
             render_center(screen, font_hint, item.instruction, int(h * 0.10), (190, 190, 205))
+            prompt_text = item.prompt + "\n" + item.example
+            task_font = fit_font_for_box(prompt_text, task_font_base, 14, prompt_rect.width, prompt_rect.height, line_gap=6)
             render_wrapped_block(
                 screen,
-                font_task,
-                item.prompt + "\n" + item.example,
+                task_font,
+                prompt_text,
                 prompt_rect.x,
                 prompt_rect.y,
                 prompt_rect.width,
                 prompt_rect.height,
                 (240, 240, 240),
+                line_gap=6,
             )
 
             input_color = (230, 230, 230)
@@ -696,9 +696,10 @@ def main():
                 input_color = (80, 220, 120)
 
             shown_input = user_text if user_text else " "
+            input_font = fit_font_for_box(shown_input, input_font_base, 12, input_rect.width, input_rect.height, line_gap=6)
             render_answer_block(
                 screen,
-                font_input,
+                input_font,
                 shown_input,
                 input_rect.x,
                 input_rect.y,
@@ -706,6 +707,7 @@ def main():
                 input_rect.height,
                 input_color,
                 error_word_idxs if feedback == "wrong" else set(),
+                line_gap=6,
             )
 
             if feedback == "wrong":

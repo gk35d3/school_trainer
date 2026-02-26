@@ -125,3 +125,17 @@ def weighted_pick_tag(
         if upto >= r:
             return tag
     return weights[-1][0]
+
+
+# Objective: Read the most recent logged difficulty for one app from events.
+def latest_logged_difficulty(events: List[Dict[str, Any]], app_id: str, fallback: float) -> float:
+    for ev in reversed(events):
+        if ev.get("app") != app_id:
+            continue
+        for key in ("difficulty_end", "difficulty_start", "difficulty"):
+            if key in ev:
+                try:
+                    return clamp(float(ev[key]), 0.0, 1.0)
+                except (TypeError, ValueError):
+                    continue
+    return clamp(float(fallback), 0.0, 1.0)

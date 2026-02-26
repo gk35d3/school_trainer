@@ -4,7 +4,14 @@ from typing import Any, Dict, List, Optional
 
 import pygame
 
-from adaptive_core import build_state_from_events, clamp, update_overall_difficulty, update_tag_stats, weighted_pick_tag
+from adaptive_core import (
+    build_state_from_events,
+    clamp,
+    latest_logged_difficulty,
+    update_overall_difficulty,
+    update_tag_stats,
+    weighted_pick_tag,
+)
 from trainer_data import append_event, load_recent_events, now_ts
 
 # =========================
@@ -15,8 +22,6 @@ FPS = 60
 SESSION_QUESTIONS = 40
 CORRECT_PAUSE_SECONDS = 0.6
 
-# Warm-up: start a bit easier than learned skill
-WARMUP_DIFFICULTY_OFFSET = 0.08
 RAMP_MAX_BONUS = 0.20
 ALLOW_NEGATIVES = False
 TAG_WINDOW = 80
@@ -308,7 +313,7 @@ def main():
     font_small = pygame.font.SysFont(None, int(base * 0.32))
 
     session_id = f"math_{int(now_ts())}"
-    session_base_difficulty = clamp(float(state["difficulty"]) - WARMUP_DIFFICULTY_OFFSET, 0.0, 1.0)
+    session_base_difficulty = latest_logged_difficulty(events, APP_ID, float(state["difficulty"]))
 
     q_index = 0
     completed = False

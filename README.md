@@ -34,6 +34,7 @@ Attempt lines also include:
 
 Both trainers use fixed sets of questions:
 - `SESSION_QUESTIONS = 40`
+- session start difficulty = latest logged difficulty for that app (`math` or `german`)
 
 ## German Exercise Types
 

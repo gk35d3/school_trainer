@@ -8,5 +8,6 @@ cd "$REPO_DIR"
 git fetch --all --prune
 git pull --ff-only
 
-echo
-read -rp "Update complete. Press Enter to close..."
+# Close Terminal window after script finishes.
+osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
+exit 0

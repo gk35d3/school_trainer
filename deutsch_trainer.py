@@ -1,7 +1,8 @@
 import random
+import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pygame
 
@@ -22,44 +23,90 @@ from trainer_data import append_event, load_recent_events, now_ts
 FPS = 60
 SESSION_QUESTIONS = 40
 CORRECT_PAUSE_SECONDS = 0.6
-
 RAMP_MAX_BONUS = 0.20
 TAG_WINDOW = 100
-MAX_INPUT_CHARS = 120
+MAX_INPUT_CHARS = 160
 NORMALIZE_MULTI_SPACES = True
 
 APP_ID = "german"
 
-# Focus boosts inferred from handwritten text:
-# - noun capitalization
-# - consonant doubling / cluster spelling
-# - verb endings
-# - punctuation
-# - umlaut / ß handling
+# Objective: Increase focus on weaknesses visible in handwriting samples.
 FOCUS_BOOSTS = {
     "noun_cap": 0.35,
     "verb_end": 0.30,
     "double_consonant": 0.35,
     "cluster_sch_ch": 0.25,
-    "punct": 0.20,
+    "punct": 0.25,
     "umlaut_esz": 0.25,
+    "sentence_flow": 0.20,
 }
+
+# Objective: Keep prior defaults for unseen tags.
+DEFAULT_ACC = 0.58
+DEFAULT_RT = 10.0
+
+# Objective: Define open questions with semantic anchors, not single fixed sentences.
+QUESTION_TEMPLATES: List[Dict[str, Any]] = [
+    {
+        "question": "Was machen Bienen?",
+        "keyword_groups": [["bienen"], ["fliegen", "summen", "sammeln"]],
+        "tags": ["noun_cap", "verb_end", "sentence_flow", "punct"],
+        "example": "Bienen fliegen und sammeln Nektar.",
+    },
+    {
+        "question": "Was macht ein Hund im Park?",
+        "keyword_groups": [["hund"], ["läuft", "springt", "spielt", "rennt"]],
+        "tags": ["noun_cap", "verb_end", "double_consonant", "punct"],
+        "example": "Ein Hund läuft und spielt im Park.",
+    },
+    {
+        "question": "Was machen Kinder in der Schule?",
+        "keyword_groups": [["kinder"], ["lernen", "lesen", "schreiben"]],
+        "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
+        "example": "Kinder lernen, lesen und schreiben in der Schule.",
+    },
+    {
+        "question": "Wie ist die Straße nach dem Regen?",
+        "keyword_groups": [["straße"], ["nass", "glatt", "rutschig"]],
+        "tags": ["noun_cap", "umlaut_esz", "punct", "sentence_flow"],
+        "example": "Die Straße ist nass und glatt.",
+    },
+    {
+        "question": "Was machen Vögel am Morgen?",
+        "keyword_groups": [["vögel"], ["fliegen", "singen"]],
+        "tags": ["noun_cap", "umlaut_esz", "verb_end", "punct"],
+        "example": "Vögel fliegen und singen am Morgen.",
+    },
+    {
+        "question": "Was macht die Katze in der Nacht?",
+        "keyword_groups": [["katze"], ["schleicht", "jagt", "läuft"]],
+        "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
+        "example": "Die Katze schleicht und jagt in der Nacht.",
+    },
+]
+
+ALLOWED_TAGS = [
+    "noun_cap",
+    "verb_end",
+    "double_consonant",
+    "cluster_sch_ch",
+    "umlaut_esz",
+    "punct",
+    "sentence_flow",
+]
+
+WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+")
 
 
 # =========================
 # Helpers
 # =========================
-# Objective: Set prior defaults for unseen German skill tags.
-DEFAULT_ACC = 0.58
-DEFAULT_RT = 10.0
-
-
-# Objective: Normalize composed/decomposed unicode into a stable form.
+# Objective: Normalize unicode into one stable representation.
 def to_nfc(s: str) -> str:
     return unicodedata.normalize("NFC", s)
 
 
-# Objective: Normalize learner input/target text before strict comparison.
+# Objective: Normalize typed text before grammar/spelling checks.
 def normalize_text(s: str) -> str:
     s = to_nfc(s).strip()
     if NORMALIZE_MULTI_SPACES:
@@ -67,9 +114,29 @@ def normalize_text(s: str) -> str:
     return s
 
 
-# Objective: Perform normalized exact-match checking.
-def is_match(typed: str, target: str) -> bool:
-    return normalize_text(typed) == normalize_text(target)
+# Objective: Split text into word tokens and preserve order for highlighting.
+def extract_words(text: str) -> List[str]:
+    return [m.group(0) for m in WORD_RE.finditer(to_nfc(text))]
+
+
+# Objective: Compute edit distance to detect likely misspellings of expected keywords.
+def levenshtein(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        cur = [i]
+        for j, cb in enumerate(b, start=1):
+            ins = cur[j - 1] + 1
+            dele = prev[j] + 1
+            sub = prev[j - 1] + (0 if ca == cb else 1)
+            cur.append(min(ins, dele, sub))
+        prev = cur
+    return prev[-1]
 
 
 # Objective: Rebuild German adaptive state from shared JSONL attempts.
@@ -92,78 +159,18 @@ def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 # =========================
 # Content model
 # =========================
-# Objective: Represent one German exercise item and expected answer.
+# Objective: Represent one open-question exercise with flexible answer checks.
 @dataclass
 class WritingItem:
     instruction: str
     prompt: str
-    target: str
+    keyword_groups: List[List[str]]
     tags: List[str]
     kind: str
+    example: str
 
 
-NOUNS = [
-    "der Bagger", "der Hund", "der Zug", "der Baum", "der Vogel", "der Frosch", "der Drache", "der Schnee",
-    "die Katze", "die Schule", "die Straße", "die Tasche", "die Lampe", "die Maus", "die Wolke", "die Brücke",
-    "das Kind", "das Haus", "das Brot", "das Fenster", "das Pferd", "das Messer", "das Bett", "das Wasser",
-]
-
-NOUNS_PL = [
-    "die Kinder", "die Hunde", "die Züge", "die Bäume", "die Vögel", "die Frösche", "die Straßen", "die Häuser",
-    "die Fenster", "die Mäuse", "die Brücken", "die Wolken", "die Taschen", "die Betten",
-]
-
-VERBS_SG = [
-    "läuft", "schläft", "schreibt", "liest", "springt", "lacht", "weint", "baut", "sammelt", "klettert", "zeichnet",
-]
-
-VERBS_PL = [
-    "laufen", "schlafen", "schreiben", "lesen", "springen", "lachen", "weinen", "bauen", "sammeln", "klettern", "zeichnen",
-]
-
-ADJECTIVES = [
-    "kalt", "warm", "groß", "klein", "leise", "laut", "schnell", "langsam", "fröhlich", "müde", "dunkel", "hell",
-]
-
-OBJECTS = [
-    "einen Ball", "eine Tasche", "ein Brot", "ein Bild", "einen großen Stein", "ein kleines Haus", "eine warme Suppe",
-]
-
-PREP_PHRASES = [
-    "im Garten", "in der Schule", "auf der Straße", "im Haus", "am Abend", "in der Nacht", "am Morgen",
-]
-
-CONNECTORS = ["und", "aber", "dann", "danach", "plötzlich", "später"]
-
-WORD_DRILLS = [
-    ("Schule", ["noun_cap", "cluster_sch_ch"]),
-    ("Schiene", ["noun_cap", "cluster_sch_ch", "ie_ei"]),
-    ("Straße", ["noun_cap", "umlaut_esz"]),
-    ("müde", ["umlaut_esz"]),
-    ("später", ["umlaut_esz"]),
-    ("rennen", ["double_consonant", "verb_end"]),
-    ("kommen", ["double_consonant", "verb_end"]),
-    ("schwimmen", ["double_consonant", "cluster_sch_ch", "verb_end"]),
-    ("machen", ["cluster_sch_ch", "verb_end"]),
-    ("lesen", ["verb_end"]),
-    ("Freunde", ["noun_cap"]),
-    ("Mädchen", ["noun_cap", "umlaut_esz"]),
-    ("Brücke", ["noun_cap", "double_consonant", "umlaut_esz"]),
-]
-
-ALLOWED_TAGS = [
-    "noun_cap",
-    "verb_end",
-    "double_consonant",
-    "cluster_sch_ch",
-    "ie_ei",
-    "umlaut_esz",
-    "punct",
-    "sentence_flow",
-]
-
-
-# Objective: Select the next weakest orthography/grammar tag.
+# Objective: Select next weakest tag for adaptive targeting.
 def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     return weighted_pick_tag(
         state,
@@ -178,208 +185,94 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     )
 
 
-# Objective: Infer orthography/grammar tags directly from sentence text.
-def add_tags_from_text(sentence: str) -> List[str]:
-    tags: List[str] = ["sentence_flow", "punct"]
-
-    words = sentence.replace(".", "").split()
-    for i, word in enumerate(words):
-        clean = word.strip(".,!?;:")
-        if i > 0 and clean and clean[0].isupper():
-            tags.append("noun_cap")
-
-        low = clean.lower()
-        if any(x in low for x in ("sch", "ch")):
-            tags.append("cluster_sch_ch")
-        if "ie" in low or "ei" in low:
-            tags.append("ie_ei")
-        if any(x in low for x in ("ä", "ö", "ü", "ß")):
-            tags.append("umlaut_esz")
-        if "nn" in low or "mm" in low or "tt" in low:
-            tags.append("double_consonant")
-        if low.endswith("en") or low.endswith("t"):
-            tags.append("verb_end")
-
-    return list(sorted(set(tags)))
-
-
-# Objective: Build focused single-word spelling tasks.
-def make_word_item(target_tag: str) -> WritingItem:
-    candidates = [(w, t) for (w, t) in WORD_DRILLS if target_tag in t]
-    if not candidates:
-        candidates = WORD_DRILLS[:]
-    word, tags = random.choice(candidates)
-    merged = list(sorted(set(tags + [target_tag])))
+# Objective: Build one open composition question aligned to a target tag.
+def make_open_question_item(target_tag: str) -> WritingItem:
+    targeted = [tpl for tpl in QUESTION_TEMPLATES if target_tag in tpl["tags"]]
+    tpl = random.choice(targeted if targeted else QUESTION_TEMPLATES)
     return WritingItem(
-        instruction="Schreibe das Wort richtig:",
-        prompt=word,
-        target=word,
-        tags=merged,
-        kind="copy_word",
+        instruction="Schreibe einen ganzen Antwortsatz (freie Form):",
+        prompt=f"Frage: {tpl['question']}",
+        keyword_groups=tpl["keyword_groups"],
+        tags=list(sorted(set(tpl["tags"] + [target_tag]))),
+        kind="open_question",
+        example=f"Beispiel: {tpl['example']}",
     )
 
 
-# Objective: Generate broad sentence variants for copy/comprehension tasks.
-def make_sentence() -> str:
-    pattern = random.randint(1, 5)
+# Objective: Evaluate free-composition answer for grammar, punctuation, and keyword spelling.
+def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int], str]:
+    text = normalize_text(typed)
+    if not text:
+        return (False, set(), "Bitte schreibe einen Antwortsatz.")
 
-    if pattern == 1:
-        subj = random.choice(NOUNS)
-        verb = random.choice(VERBS_SG)
-        prep = random.choice(PREP_PHRASES)
-        return capitalize_sentence_start(f"{subj} {verb} {prep}.")
+    words = extract_words(text)
+    words_lower = [w.lower() for w in words]
+    error_word_idxs: Set[int] = set()
+    issues: List[str] = []
 
-    if pattern == 2:
-        subj = random.choice(NOUNS_PL)
-        verb = random.choice(VERBS_PL)
-        obj = random.choice(OBJECTS)
-        return capitalize_sentence_start(f"{subj} {verb} {obj}.")
+    # Grammar: sentence start capitalization.
+    first_alpha = next((c for c in text if c.isalpha()), "")
+    if first_alpha and not first_alpha.isupper():
+        if words:
+            error_word_idxs.add(0)
+        issues.append("Satzanfang groß schreiben")
 
-    if pattern == 3:
-        subj = random.choice(NOUNS)
-        verb = random.choice(VERBS_SG)
-        adj = random.choice(ADJECTIVES)
-        return capitalize_sentence_start(f"{subj} ist {adj}.")
+    # Grammar: sentence-ending punctuation.
+    if not text.endswith((".", "!", "?")):
+        if words:
+            error_word_idxs.add(len(words) - 1)
+        issues.append("Satzzeichen am Ende fehlt")
 
-    if pattern == 4:
-        first = capitalize_sentence_start(f"{random.choice(NOUNS)} {random.choice(VERBS_SG)}.")
-        second = f"{random.choice(CONNECTORS).capitalize()} {random.choice(NOUNS_PL)} {random.choice(VERBS_PL)}."
-        return f"{first} {second}"
+    # Grammar: minimal sentence length.
+    if len(words) < 3:
+        error_word_idxs.update(range(len(words)))
+        issues.append("Antwort ist zu kurz")
 
-    subj = random.choice(NOUNS_PL)
-    verb = random.choice(VERBS_PL)
-    prep = random.choice(PREP_PHRASES)
-    obj = random.choice(OBJECTS)
-    return capitalize_sentence_start(f"{subj} {verb} {prep} und tragen {obj}.")
+    # Semantic + spelling anchors: each group needs at least one word.
+    for group in item.keyword_groups:
+        group_l = [g.lower() for g in group]
+        if any(g in words_lower for g in group_l):
+            continue
 
+        best_idx = -1
+        best_dist = 99
+        best_target = ""
+        for i, w in enumerate(words_lower):
+            for g in group_l:
+                d = levenshtein(w, g)
+                if d < best_dist:
+                    best_dist = d
+                    best_idx = i
+                    best_target = g
 
-# Objective: Guarantee sentence-initial capitalization.
-def capitalize_sentence_start(s: str) -> str:
-    s = to_nfc(s)
-    if not s:
-        return s
-    return s[0].upper() + s[1:]
+        if best_idx >= 0 and best_dist <= 2:
+            error_word_idxs.add(best_idx)
+            issues.append(f"Rechtschreibung prüfen: '{words[best_idx]}' (nahe bei '{best_target}')")
+        else:
+            # No near-miss token -> likely missing concept in sentence.
+            error_word_idxs.update(range(len(words)))
+            issues.append(f"Inhalt ergänzen: eines von {', '.join(group)}")
 
+    # Grammar: ensure at least one finite-looking verb.
+    if not any(w.endswith(("t", "en")) for w in words_lower):
+        error_word_idxs.update(range(len(words)))
+        issues.append("Ein Verb fehlt")
 
-# Objective: Build sentence-copy tasks aligned to target tags.
-def make_sentence_item(target_tag: str) -> WritingItem:
-    for _ in range(140):
-        sentence = make_sentence()
-        tags = add_tags_from_text(sentence)
-        if target_tag in tags:
-            return WritingItem(
-                instruction="Schreibe den Satz korrekt ab:",
-                prompt=sentence,
-                target=sentence,
-                tags=tags,
-                kind="copy_sentence",
-            )
-        if random.random() < 0.10:
-            return WritingItem(
-                instruction="Schreibe den Satz korrekt ab:",
-                prompt=sentence,
-                target=sentence,
-                tags=tags,
-                kind="copy_sentence",
-            )
-
-    sentence = make_sentence()
-    tags = add_tags_from_text(sentence)
-    return WritingItem(
-        instruction="Schreibe den Satz korrekt ab:",
-        prompt=sentence,
-        target=sentence,
-        tags=tags,
-        kind="copy_sentence",
-    )
+    ok = len(issues) == 0
+    message = " | ".join(issues[:2]) if issues else ""
+    return (ok, error_word_idxs, message)
 
 
-# Objective: Build unambiguous one-word gap-fill tasks.
-def make_fill_blank_item(target_tag: str) -> WritingItem:
-    # Curated templates: exactly one missing word with an unambiguous expected answer.
-    templates = [
-        # noun capitalization
-        ("Im Satz fehlt das Nomen. Setze es ein:", "Die ____ spielt im Garten.", "Katze", ["noun_cap"]),
-        ("Im Satz fehlt das Nomen. Setze es ein:", "Der ____ fährt schnell.", "Zug", ["noun_cap", "ie_ei"]),
-        # verb ending / grammar
-        ("Setze die richtige Verbform ein:", "Die Kinder ____ im Park.", "spielen", ["verb_end"]),
-        ("Setze die richtige Verbform ein:", "Der Hund ____ im Haus.", "schläft", ["verb_end", "umlaut_esz"]),
-        # clusters sch/ch
-        ("Setze das fehlende Wort ein:", "Die ____ ist lang.", "Schiene", ["cluster_sch_ch", "noun_cap", "ie_ei"]),
-        ("Setze das fehlende Wort ein:", "Wir ____ heute ein Bild.", "zeichnen", ["cluster_sch_ch", "verb_end"]),
-        # doubled consonants
-        ("Setze das fehlende Wort ein:", "Wir ____ zum Bus.", "rennen", ["double_consonant", "verb_end"]),
-        ("Setze das fehlende Wort ein:", "Die Kinder ____ im Wasser.", "schwimmen", ["double_consonant", "cluster_sch_ch", "verb_end"]),
-        # umlaut/ß
-        ("Setze das fehlende Wort ein:", "Die Straße ist ____ .", "groß", ["umlaut_esz"]),
-        ("Setze das fehlende Wort ein:", "Das Mädchen ist ____ .", "müde", ["umlaut_esz"]),
-    ]
-
-    targeted = [tpl for tpl in templates if target_tag in tpl[3]]
-    pool = targeted if targeted else templates
-    instruction, prompt, answer, base_tags = random.choice(pool)
-    tags = list(sorted(set(base_tags + [target_tag, "sentence_flow", "punct"])))
-    return WritingItem(
-        instruction=instruction,
-        prompt=prompt,
-        target=answer,
-        tags=tags,
-        kind="fill_blank",
-    )
-
-
-# Objective: Build short comprehension questions from generated text.
-def make_question_item(target_tag: str) -> WritingItem:
-    subj = random.choice(NOUNS)
-    verb = random.choice(VERBS_SG)
-    place = random.choice(PREP_PHRASES)
-    obj = random.choice(OBJECTS)
-    sentence = capitalize_sentence_start(f"{subj} {verb} {place} und findet {obj}.")
-
-    q_type = random.choice(["wer", "wo", "was"])
-    if q_type == "wer":
-        question = "Frage: Wer handelt im Satz?"
-        answer = subj
-    elif q_type == "wo":
-        question = "Frage: Wo passiert es?"
-        answer = place
-    else:
-        question = "Frage: Was wird gefunden?"
-        answer = obj
-
-    prompt = f"{sentence}\n{question}"
-    tags = add_tags_from_text(sentence)
-    tags = list(sorted(set(tags + [target_tag, "sentence_flow"])))
-    return WritingItem(
-        instruction="Lies und beantworte die Frage:",
-        prompt=prompt,
-        target=answer,
-        tags=tags,
-        kind="question",
-    )
-
-
-# Objective: Mix exercise modes while keeping weakness targeting.
+# Objective: Keep only open-question mode as requested.
 def pick_next_item(state: Dict[str, Any], difficulty: float) -> WritingItem:
     target = pick_target_tag(state, ALLOWED_TAGS)
-    p_copy_word = clamp(0.22 - 0.08 * difficulty, 0.10, 0.22)
-    p_fill_blank = clamp(0.38 + 0.08 * difficulty, 0.38, 0.50)
-    p_question = clamp(0.28 + 0.12 * difficulty, 0.28, 0.44)
-
-    r = random.random()
-    if r < p_copy_word:
-        return make_word_item(target)
-    if r < p_copy_word + p_fill_blank:
-        return make_fill_blank_item(target)
-    if r < p_copy_word + p_fill_blank + p_question:
-        return make_question_item(target)
-    return make_sentence_item(target)
+    return make_open_question_item(target)
 
 
 # =========================
 # UI
 # =========================
-# Objective: Render a shared progress bar style for German mode.
+# Objective: Render shared progress bar style.
 def draw_progress_bar(surface, rect: pygame.Rect, frac_0_1: float):
     pygame.draw.rect(surface, (30, 30, 40), rect, border_radius=10)
     inner = rect.inflate(-6, -6)
@@ -396,7 +289,7 @@ def render_center(screen, font, text, y, color):
     screen.blit(surf, rect)
 
 
-# Objective: Wrap text by visual width while respecting explicit newlines.
+# Objective: Wrap text by width while respecting explicit line breaks.
 def wrap_text(font, text: str, max_width: int) -> List[str]:
     text = to_nfc(text)
     lines: List[str] = []
@@ -418,7 +311,7 @@ def wrap_text(font, text: str, max_width: int) -> List[str]:
     return lines
 
 
-# Objective: Draw wrapped multi-line text inside a bounded rectangle.
+# Objective: Draw wrapped text inside a bounded rectangle.
 def render_wrapped_block(
     screen,
     font,
@@ -443,9 +336,49 @@ def render_wrapped_block(
         y_cur += line_h
 
 
-# Objective: Pick a font with robust umlaut/ß rendering.
+# Objective: Draw typed answer with per-word red highlights at error positions.
+def render_answer_block(
+    screen,
+    font,
+    text: str,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    default_color,
+    error_word_idxs: Set[int],
+    line_gap: int = 8,
+):
+    words = text.split()
+    if not words:
+        words = [""]
+
+    left = x + 10
+    right = x + w - 10
+    y_cur = y + 10
+    line_h = font.get_linesize() + line_gap
+    max_lines = max(1, h // line_h)
+
+    x_cur = left
+    rendered_lines = 0
+    for i, word in enumerate(words):
+        token = word + (" " if i < len(words) - 1 else "")
+        token_w = font.size(token)[0]
+        if x_cur + token_w > right:
+            rendered_lines += 1
+            if rendered_lines >= max_lines:
+                break
+            x_cur = left
+            y_cur += line_h
+
+        color = (240, 90, 90) if i in error_word_idxs else default_color
+        surf = font.render(to_nfc(token), True, color)
+        screen.blit(surf, (x_cur, y_cur))
+        x_cur += token_w
+
+
+# Objective: Prefer fonts that render umlauts/ß correctly.
 def pick_unicode_font(size: int):
-    # Prefer fonts that reliably render German umlauts/ß as single glyphs.
     for name in ("DejaVu Sans", "Noto Sans", "Arial", "Liberation Sans"):
         f = pygame.font.SysFont(name, size)
         if f is not None:
@@ -459,16 +392,16 @@ def main():
     state = build_state_from_log(events)
 
     pygame.init()
-    pygame.display.set_caption("German Writing Trainer")
+    pygame.display.set_caption("German Question Trainer")
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     w, h = screen.get_size()
     clock = pygame.time.Clock()
 
     base = max(24, min(w, h) // 11)
-    font_task = pick_unicode_font(int(base * 1.2))
-    font_input = pick_unicode_font(int(base * 1.0))
-    font_hint = pick_unicode_font(int(base * 0.40))
-    font_small = pick_unicode_font(int(base * 0.32))
+    font_task = pick_unicode_font(int(base * 0.95))
+    font_input = pick_unicode_font(int(base * 0.82))
+    font_hint = pick_unicode_font(int(base * 0.34))
+    font_small = pick_unicode_font(int(base * 0.30))
 
     session_id = f"german_{int(now_ts())}"
     session_base_difficulty = latest_logged_difficulty(events, APP_ID, float(state["difficulty"]))
@@ -483,46 +416,58 @@ def main():
     attempts_for_item = 0
     item_start = now_ts()
     item_solved = False
+    error_word_idxs: Set[int] = set()
+    error_msg = ""
 
+    # Objective: Increase challenge slightly as session advances.
     def current_session_difficulty() -> float:
         prog = q_index / max(1, (SESSION_QUESTIONS - 1))
         return clamp(session_base_difficulty + (RAMP_MAX_BONUS * prog), 0.0, 1.0)
 
     item = pick_next_item(state, current_session_difficulty())
 
-    append_event({
-        "type": "session_start",
-        "app": APP_ID,
-        "session_id": session_id,
-        "questions_target": SESSION_QUESTIONS,
-        "difficulty_start": float(current_session_difficulty()),
-    })
-
-    def log_attempt(correct: bool, typed: str, rt: float):
-        append_event({
-            "type": "attempt",
+    append_event(
+        {
+            "type": "session_start",
             "app": APP_ID,
             "session_id": session_id,
-            "q_index": q_index + 1,
-            "kind": item.kind,
-            "prompt": item.prompt,
-            "target": item.target,
-            "typed": typed,
-            "correct": bool(correct),
-            "attempt": attempts_for_item,
-            "rt": float(rt),
-            "difficulty": float(current_session_difficulty()),
-            "tags": item.tags,
-        })
+            "questions_target": SESSION_QUESTIONS,
+            "difficulty_start": float(current_session_difficulty()),
+        }
+    )
 
+    # Objective: Persist each attempt with diagnostic metadata.
+    def log_attempt(correct: bool, typed: str, rt: float):
+        append_event(
+            {
+                "type": "attempt",
+                "app": APP_ID,
+                "session_id": session_id,
+                "q_index": q_index + 1,
+                "kind": item.kind,
+                "prompt": item.prompt,
+                "target": "free_composition",
+                "typed": typed,
+                "correct": bool(correct),
+                "attempt": attempts_for_item,
+                "rt": float(rt),
+                "difficulty": float(current_session_difficulty()),
+                "tags": item.tags,
+                "error_message": error_msg,
+            }
+        )
+
+    # Objective: Reset round state and pick next question.
     def advance_item():
-        nonlocal item, user_text, feedback, attempts_for_item, item_start, item_solved
+        nonlocal item, user_text, feedback, attempts_for_item, item_start, item_solved, error_word_idxs, error_msg
         item = pick_next_item(state, current_session_difficulty())
         user_text = ""
         feedback = None
         attempts_for_item = 0
         item_start = now_ts()
         item_solved = False
+        error_word_idxs = set()
+        error_msg = ""
 
     running = True
     while running:
@@ -550,7 +495,10 @@ def main():
                     attempts_for_item += 1
                     rt = now_ts() - item_start
 
-                    ok = is_match(user_text, item.target)
+                    ok, err_idxs, msg = evaluate_free_answer(item, user_text)
+                    error_word_idxs = err_idxs
+                    error_msg = msg
+
                     if ok:
                         feedback = "correct"
                         feedback_since = now_ts()
@@ -561,13 +509,29 @@ def main():
                             solved_count += 1
                             state["total_questions_seen"] = int(state["total_questions_seen"]) + 1
                             update_tag_stats(state, item.tags, correct=True, rt=rt, tag_window=TAG_WINDOW)
-                            update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=14.0, smooth_old=0.90, smooth_new=0.10)
+                            update_overall_difficulty(
+                                state,
+                                default_acc=DEFAULT_ACC,
+                                default_rt=DEFAULT_RT,
+                                rt_good=3.0,
+                                rt_bad=14.0,
+                                smooth_old=0.90,
+                                smooth_new=0.10,
+                            )
                     else:
                         feedback = "wrong"
                         feedback_since = now_ts()
                         log_attempt(False, user_text, rt)
                         update_tag_stats(state, item.tags, correct=False, rt=rt, tag_window=TAG_WINDOW)
-                        update_overall_difficulty(state, default_acc=DEFAULT_ACC, default_rt=DEFAULT_RT, rt_good=3.0, rt_bad=14.0, smooth_old=0.90, smooth_new=0.10)
+                        update_overall_difficulty(
+                            state,
+                            default_acc=DEFAULT_ACC,
+                            default_rt=DEFAULT_RT,
+                            rt_good=3.0,
+                            rt_bad=14.0,
+                            smooth_old=0.90,
+                            smooth_new=0.10,
+                        )
 
                 elif event.key == pygame.K_BACKSPACE:
                     user_text = user_text[:-1]
@@ -581,14 +545,16 @@ def main():
                 q_index += 1
                 if q_index >= SESSION_QUESTIONS:
                     completed = True
-                    append_event({
-                        "type": "session_end",
-                        "app": APP_ID,
-                        "session_id": session_id,
-                        "questions_done": q_index,
-                        "correct_solved": solved_count,
-                        "difficulty_end": float(state["difficulty"]),
-                    })
+                    append_event(
+                        {
+                            "type": "session_end",
+                            "app": APP_ID,
+                            "session_id": session_id,
+                            "questions_done": q_index,
+                            "correct_solved": solved_count,
+                            "difficulty_end": float(state["difficulty"]),
+                        }
+                    )
                 else:
                     advance_item()
 
@@ -601,8 +567,8 @@ def main():
             bar_rect = pygame.Rect(int(w * 0.10), int(h * 0.90), int(w * 0.80), int(h * 0.05))
             draw_progress_bar(screen, bar_rect, 1.0)
         else:
-            prompt_rect = pygame.Rect(int(w * 0.08), int(h * 0.16), int(w * 0.84), int(h * 0.30))
-            input_rect = pygame.Rect(int(w * 0.08), int(h * 0.52), int(w * 0.84), int(h * 0.24))
+            prompt_rect = pygame.Rect(int(w * 0.08), int(h * 0.15), int(w * 0.84), int(h * 0.28))
+            input_rect = pygame.Rect(int(w * 0.08), int(h * 0.48), int(w * 0.84), int(h * 0.28))
             feedback_y = input_rect.bottom + int(h * 0.03)
 
             pygame.draw.rect(screen, (18, 18, 26), prompt_rect, border_radius=12)
@@ -610,12 +576,11 @@ def main():
             pygame.draw.rect(screen, (18, 18, 26), input_rect, border_radius=12)
             pygame.draw.rect(screen, (45, 45, 62), input_rect, width=2, border_radius=12)
 
-            render_center(screen, font_hint, item.instruction, int(h * 0.12), (190, 190, 205))
-
+            render_center(screen, font_hint, item.instruction, int(h * 0.10), (190, 190, 205))
             render_wrapped_block(
                 screen,
                 font_task,
-                item.prompt,
+                item.prompt + "\n" + item.example,
                 prompt_rect.x,
                 prompt_rect.y,
                 prompt_rect.width,
@@ -623,15 +588,12 @@ def main():
                 (240, 240, 240),
             )
 
+            input_color = (230, 230, 230)
             if feedback == "correct":
                 input_color = (80, 220, 120)
-            elif feedback == "wrong":
-                input_color = (240, 90, 90)
-            else:
-                input_color = (230, 230, 230)
 
             shown_input = user_text if user_text else " "
-            render_wrapped_block(
+            render_answer_block(
                 screen,
                 font_input,
                 shown_input,
@@ -640,10 +602,12 @@ def main():
                 input_rect.width,
                 input_rect.height,
                 input_color,
+                error_word_idxs if feedback == "wrong" else set(),
             )
 
             if feedback == "wrong":
-                render_center(screen, font_hint, "Try again", feedback_y, (240, 90, 90))
+                msg = error_msg if error_msg else "Bitte pruefen"
+                render_center(screen, font_hint, msg, feedback_y, (240, 90, 90))
             elif feedback == "correct":
                 render_center(screen, font_hint, "Correct", feedback_y, (80, 220, 120))
 

@@ -36,13 +36,16 @@ Both trainers use fixed sets of questions:
 - `SESSION_QUESTIONS = 40`
 - session start difficulty = latest logged difficulty for that app (`math` or `german`)
 
-## German Exercise Types
+## German Exercise Type
 
-The German trainer now mixes:
-- `copy_word`
-- `copy_sentence`
-- `fill_blank` (single, clear one-word answer)
-- `question` (read + answer)
+The German trainer now uses only:
+- `open_question` (free composition answer)
+
+Checks focus on:
+- grammar basics (capitalization, verb presence, sentence length)
+- punctuation at sentence end
+- keyword-based meaning coverage
+- likely spelling errors near expected anchor words
 
 ## Focus Retuning
 

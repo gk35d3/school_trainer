@@ -32,13 +32,13 @@ APP_ID = "german"
 
 # Objective: Increase focus on weaknesses visible in handwriting samples.
 FOCUS_BOOSTS = {
-    "noun_cap": 0.35,
-    "verb_end": 0.30,
+    "noun_cap": 0.40,
+    "verb_end": 0.35,
     "double_consonant": 0.35,
-    "cluster_sch_ch": 0.25,
-    "punct": 0.25,
-    "umlaut_esz": 0.25,
-    "sentence_flow": 0.20,
+    "cluster_sch_ch": 0.40,
+    "punct": 0.35,
+    "umlaut_esz": 0.40,
+    "sentence_flow": 0.35,
 }
 
 # Objective: Keep prior defaults for unseen tags.
@@ -155,7 +155,62 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
         "example": "Nachbarn helfen einander, räumen Wege frei und teilen Essen.",
         "level": 5,
     },
+    {
+        "question": "Was passiert bei einer Überschwemmung?",
+        "subject_keywords": ["überschwemmung"],
+        "subject_number": "singular",
+        "subject_gender": "f",
+        "tags": ["noun_cap", "umlaut_esz", "cluster_sch_ch", "sentence_flow", "punct"],
+        "example": "Eine Überschwemmung überflutet Straßen und Häuser.",
+        "level": 3,
+    },
+    {
+        "question": "Was passiert mit den Schienen bei starkem Regen?",
+        "subject_keywords": ["schienen"],
+        "subject_number": "plural",
+        "subject_gender": "f",
+        "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
+        "example": "Die Schienen bleiben nass und müssen geprüft werden.",
+        "level": 3,
+    },
+    {
+        "question": "Was macht ein Kind in der Nacht?",
+        "subject_keywords": ["kind"],
+        "subject_number": "singular",
+        "subject_gender": "n",
+        "tags": ["noun_cap", "verb_end", "sentence_flow", "punct"],
+        "example": "Ein Kind schläft in der Nacht und träumt ruhig.",
+        "level": 2,
+    },
+    {
+        "question": "Was machen Menschen am Morgen nach einem Sturm?",
+        "subject_keywords": ["menschen"],
+        "subject_number": "plural",
+        "subject_gender": "m",
+        "tags": ["noun_cap", "verb_end", "sentence_flow", "punct"],
+        "example": "Menschen räumen Wege frei und helfen den Nachbarn.",
+        "level": 3,
+    },
 ]
+
+QUESTION_EN_HINTS: Dict[str, str] = {
+    "Was machen Bienen?": "What do bees do?",
+    "Was macht ein Hund im Park?": "What does a dog do in the park?",
+    "Was machen Kinder in der Schule?": "What do children do in school?",
+    "Wie ist die Straße nach dem Regen?": "How is the street after the rain?",
+    "Was machen Vögel am Morgen?": "What do birds do in the morning?",
+    "Was macht die Katze in der Nacht?": "What does the cat do at night?",
+    "Was machen Feuerwehrleute bei einem Einsatz?": "What do firefighters do during an operation?",
+    "Was machen Forscher im Labor?": "What do researchers do in the lab?",
+    "Was machen Bauern auf dem Feld?": "What do farmers do in the field?",
+    "Was machen Musiker vor einem Auftritt?": "What do musicians do before a performance?",
+    "Was machen Astronauten in einer Raumstation?": "What do astronauts do in a space station?",
+    "Wie helfen Nachbarn einander nach einem Sturm?": "How do neighbors help each other after a storm?",
+    "Was passiert bei einer Überschwemmung?": "What happens during a flood?",
+    "Was passiert mit den Schienen bei starkem Regen?": "What happens to the rails in heavy rain?",
+    "Was macht ein Kind in der Nacht?": "What does a child do at night?",
+    "Was machen Menschen am Morgen nach einem Sturm?": "What do people do in the morning after a storm?",
+}
 
 ALLOWED_TAGS = [
     "noun_cap",
@@ -183,12 +238,13 @@ COMMON_VERBS = [
 
 COMMON_FUNCTION_WORDS = {
     "der", "die", "das", "ein", "eine", "einen", "einem", "einer", "den", "dem", "des",
-    "und", "oder", "aber", "denn", "weil", "dann", "danach", "später", "heute",
+    "und", "oder", "aber", "denn", "weil", "dann", "danach", "später", "heute", "morgen",
     "im", "in", "am", "auf", "bei", "mit", "nach", "vor", "zu", "vom", "zum",
+    "über", "unter", "durch", "für", "ohne", "gegen", "zwischen", "aus", "an", "von",
     "ist", "sind", "war", "waren", "hat", "haben", "wird", "werden",
     "er", "sie", "es", "ihn", "ihm", "ihr", "ihre", "sein", "seine", "seinen", "seinem",
     "wir", "ihr", "euch", "uns", "ich", "du", "nicht", "sehr", "schnell", "langsam",
-    "nass", "glatt", "rutschig", "frei", "zusammen", "einander",
+    "nass", "glatt", "rutschig", "frei", "zusammen", "einander", "da", "dort", "hier", "etwas",
 }
 
 
@@ -284,6 +340,15 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     )
 
 
+# Objective: Render question text in German with an English comprehension hint.
+def build_bilingual_prompt(question_de: str) -> str:
+    q = to_nfc(question_de)
+    hint = QUESTION_EN_HINTS.get(q, "")
+    if hint:
+        return f"Frage (DE): {q}\nQuestion (EN): {hint}"
+    return f"Frage: {q}"
+
+
 # Objective: Build one open composition question aligned to a target tag.
 def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
     # Difficulty bands map to broader content + stricter writing requirements.
@@ -320,7 +385,7 @@ def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
 
     return WritingItem(
         instruction=instruction,
-        prompt=f"Frage: {tpl['question']}",
+        prompt=build_bilingual_prompt(str(tpl["question"])),
         subject_keywords=tpl["subject_keywords"],
         subject_number=str(tpl["subject_number"]),
         subject_gender=str(tpl["subject_gender"]),
@@ -430,13 +495,25 @@ def looks_like_german_word(word: str) -> bool:
 
 # Objective: Flag typos conservatively so valid open-vocabulary words are not over-corrected.
 def is_likely_typo(word: str, candidate: str, dist: int) -> bool:
-    if dist > 1:
+    if dist != 1:
         return False
-    if len(word) <= 3 or len(candidate) <= 3:
+    lw = len(word)
+    lc = len(candidate)
+
+    if lw <= 4 or lc <= 4:
+        # For short words, only flag obvious duplicated-tail typos, e.g. "istt" -> "ist".
+        if lw == lc + 1 and word[:-1] == candidate and word[-1] == candidate[-1]:
+            return True
+        if lc == lw + 1 and candidate[:-1] == word and candidate[-1] == word[-1]:
+            return True
+        if lw == lc and lw >= 4 and word[:2] == candidate[:2] and word[-1] == candidate[-1]:
+            return True
         return False
-    if abs(len(word) - len(candidate)) > 1:
+
+    if abs(lw - lc) > 1:
         return False
-    return bool(word and candidate and (word[0] == candidate[0] or word[-1] == candidate[-1]))
+
+    return word[:2] == candidate[:2] and word[-2:] == candidate[-2:]
 
 
 # Objective: Infer finite verb number for basic agreement checks, including irregular forms.

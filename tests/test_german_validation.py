@@ -1,6 +1,6 @@
 import unittest
 
-from apps.deutsch_trainer import WritingItem, evaluate_free_answer
+from apps.deutsch_trainer import WritingItem, build_bilingual_prompt, evaluate_free_answer
 
 
 class GermanValidationTests(unittest.TestCase):
@@ -60,6 +60,14 @@ class GermanValidationTests(unittest.TestCase):
         self.assertEqual(err_idxs, set())
         self.assertTrue(msg == "" or "Ziel" in msg)
 
+    # Objective: Accept valid preposition usage with umlaut.
+    def test_accepts_sentence_with_ueber(self):
+        item = self.make_item(subject="vögel", number="plural", gender="m", min_words=4, min_verbs=1)
+        ok, err_idxs, msg = evaluate_free_answer(item, "Vögel fliegen über Felder.")
+        self.assertTrue(ok)
+        self.assertEqual(err_idxs, set())
+        self.assertEqual(msg, "")
+
     # Objective: Detect lowercase sentence starts.
     def test_rejects_lowercase_sentence_start(self):
         item = self.make_item(subject="hund", number="singular", gender="m")
@@ -116,6 +124,12 @@ class GermanValidationTests(unittest.TestCase):
         ok, _, msg = evaluate_free_answer(item, "Hund istt da.")
         self.assertFalse(ok)
         self.assertIn("Rechtschreibung", msg)
+
+    # Objective: Show German question plus English hint for comprehension support.
+    def test_build_bilingual_prompt(self):
+        prompt = build_bilingual_prompt("Was passiert bei einer Überschwemmung?")
+        self.assertIn("Frage (DE):", prompt)
+        self.assertIn("Question (EN):", prompt)
 
 
 if __name__ == "__main__":

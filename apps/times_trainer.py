@@ -352,6 +352,7 @@ def main():
     problem_start = now_ts()
     problem_solved = False
     hint_text = ""
+    wait_for_enter_advance = False
 
     recent_first_operands: List[int] = []
 
@@ -434,7 +435,7 @@ def main():
     # Objective: Move to next question while preserving compact runtime state.
     def advance_problem(solved: bool):
         nonlocal q_index, solved_count, completed, user_text, feedback, attempts_for_problem
-        nonlocal problem_start, problem_solved, hint_text, problem
+        nonlocal problem_start, problem_solved, hint_text, problem, wait_for_enter_advance
 
         recent_first_operands.append(problem.a)
         if len(recent_first_operands) > 6:
@@ -457,6 +458,7 @@ def main():
         problem_start = now_ts()
         problem_solved = False
         hint_text = ""
+        wait_for_enter_advance = False
 
     running = True
     while running:
@@ -479,6 +481,8 @@ def main():
                     continue
 
                 if feedback in ("correct", "reveal"):
+                    if wait_for_enter_advance and event.key == pygame.K_RETURN:
+                        advance_problem(solved=(feedback == "correct"))
                     continue
 
                 if event.key == pygame.K_RETURN:
@@ -502,8 +506,10 @@ def main():
                         feedback_since = now_ts()
                         if should_show_hint(state, problem.tags, rt):
                             hint_text = micro_hint(problem)
+                            wait_for_enter_advance = True
                         else:
                             hint_text = ""
+                            wait_for_enter_advance = False
 
                         if not problem_solved:
                             problem_solved = True
@@ -513,8 +519,10 @@ def main():
                         feedback_since = now_ts()
                         if attempts_for_problem >= MAX_TRIES_PER_PROBLEM:
                             feedback = "reveal"
+                            wait_for_enter_advance = True
                         else:
                             feedback = "wrong"
+                            wait_for_enter_advance = False
                         user_text = ""
 
                 elif event.key == pygame.K_BACKSPACE:
@@ -527,11 +535,11 @@ def main():
                         if feedback == "wrong":
                             feedback = None
 
-        if not completed and feedback == "correct":
+        if not completed and feedback == "correct" and not wait_for_enter_advance:
             if now_ts() - feedback_since >= CORRECT_PAUSE_SECONDS:
                 advance_problem(solved=True)
 
-        if not completed and feedback == "reveal":
+        if not completed and feedback == "reveal" and not wait_for_enter_advance:
             if now_ts() - feedback_since >= REVEAL_PAUSE_SECONDS:
                 advance_problem(solved=False)
 
@@ -586,7 +594,7 @@ def main():
                 screen.blit(surf_msg, rect_msg)
 
             if hint_text and (feedback in ("wrong", "correct", "reveal")):
-                surf_hint = font_small.render(to_nfc(hint_text), True, (170, 170, 185))
+                surf_hint = font_input.render(to_nfc(hint_text), True, (170, 170, 185))
                 rect_hint = surf_hint.get_rect(center=(w // 2, int(h * 0.72)))
                 screen.blit(surf_hint, rect_hint)
 

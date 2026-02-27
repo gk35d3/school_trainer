@@ -1,65 +1,81 @@
 # school_trainer
 
-Two fullscreen pygame trainers:
-- `mathe_trainer.py`
-- `deutsch_trainer.py`
-- shared adaptive logic: `adaptive_core.py`
+## Goal
+A simple, adaptive learning trainer for children:
+- **Math**: addition/subtraction within `1..100`, with progressive difficulty.
+- **German**: open written answers, with live grammar/spelling feedback and adaptive challenge.
 
-Both apps now write to one shared file in the project root:
-- `trainer_data.jsonl`
+The app tracks weaknesses from past attempts and focuses future questions on those skills.
 
-## Run
-
+## Super-Easy Mac Install
+1. Clone the repository:
 ```bash
-python3 mathe_trainer.py
-python3 deutsch_trainer.py
+git clone https://github.com/<your-org-or-user>/school_trainer.git
+cd school_trainer
+```
+2. In Finder, open the `school_trainer` folder and **double-click**:
+- `Install_Desktop_Launchers.command`
+3. Go to Desktop and run one of these:
+- `Run_Math_Trainer.command`: starts the adaptive math trainer (addition/subtraction 1..100).
+- `Run_German_Trainer.command`: starts the adaptive German writing trainer (free-answer questions with feedback).
+- `Update_Repo.command`: pulls the latest changes from git (`fetch` + `pull --ff-only`).
+
+Notes:
+- Launchers are standalone scripts and include custom icons.
+- If macOS blocks first run: right-click -> **Open** once.
+
+## Run Without Desktop Launchers
+From repo root:
+```bash
+python3 -m apps.mathe_trainer
+python3 -m apps.deutsch_trainer
 ```
 
-## Shared Data Format
+## Modular Structure
+```text
+apps/
+  mathe_trainer.py       # Math UI + generation + adaptive session flow
+  deutsch_trainer.py     # German UI + free-writing checks + adaptive session flow
 
-Each line in `trainer_data.jsonl` is JSON with at least:
-- `type`: `session_start` | `attempt` | `session_end`
-- `app`: `math` | `german`
+core/
+  adaptive_core.py       # Shared adaptive difficulty/tag logic
+  trainer_data.py        # Shared JSONL event persistence
+
+data/
+  trainer_data.jsonl     # Runtime learning history
+
+assets/icons/
+  math.png               # Web-sourced math icon
+  german.png             # Web-sourced german icon
+  update.png             # Web-sourced update icon
+
+Install_Desktop_Launchers.command  # Generates the 3 Desktop launchers
+```
+
+## Technical Features
+- Shared event log (`JSONL`) for both subjects.
+- Per-tag adaptive difficulty with weighted weakness targeting.
+- App-specific start difficulty from latest logged difficulty.
+- Math hardness scales by difficulty bands; constrained to `1..100`.
+- German hardness scales by prompt level + writing requirements (minimum words/verbs).
+- Live German error highlighting (incorrect words shown in red).
+- Unicode-safe text handling (umlauts/ß).
+- Fullscreen keyboard-first UI for child-friendly usage.
+
+## Data Format (trainer_data.jsonl)
+Each line is a JSON event with fields like:
+- `type`: `session_start | attempt | session_end`
+- `app`: `math | german`
 - `session_id`
 - `t` (unix timestamp)
-
-Attempt lines also include:
-- `q_index`
-- `correct`
-- `rt` (response time)
 - `difficulty`
-- `tags` (skill tags used for weakness targeting)
+- `tags`
 
-## Harmonized Session Structure
+`attempt` events also include user response details (`typed`, `correct`, `rt`, etc.).
 
-Both trainers use fixed sets of questions:
-- `SESSION_QUESTIONS = 40`
-- session start difficulty = latest logged difficulty for that app (`math` or `german`)
-
-## German Exercise Type
-
-The German trainer now uses only:
-- `open_question` (free composition answer)
-
-Checks focus on:
-- grammar basics (capitalization, verb presence, sentence length)
-- punctuation at sentence end
-- keyword-based meaning coverage
-- likely spelling errors near expected anchor words
-
-## Focus Retuning
-
-Math now prioritizes:
-- `add_carry`
-- `sub_borrow`
-- two-digit place-value stability
-
-German now prioritizes:
-- noun capitalization
-- consonant clusters (`sch`, `ch`)
-- consonant doubling (`nn`, `mm`, `tt`)
-- verb endings
-- punctuation
-- umlaut/ß handling
-
-German prompt generation has been expanded with broader vocabulary and more sentence templates.
+## Update Workflow
+Use Desktop `Update_Repo.command` or run:
+```bash
+git fetch --all --prune
+git pull --ff-only
+```

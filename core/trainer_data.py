@@ -4,8 +4,9 @@ import time
 from collections import deque
 from typing import Any, Deque, Dict, List
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(APP_DIR, "trainer_data.jsonl")
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(REPO_DIR, "data")
+DATA_PATH = os.path.join(DATA_DIR, "trainer_data.jsonl")
 
 
 # Objective: Provide a shared monotonic timestamp source for log records.
@@ -15,6 +16,7 @@ def now_ts() -> float:
 
 # Objective: Ensure the shared JSONL data file exists before reading/writing.
 def ensure_data_file() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(DATA_PATH):
         with open(DATA_PATH, "a", encoding="utf-8"):
             pass

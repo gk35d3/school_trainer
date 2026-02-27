@@ -1,7 +1,7 @@
 import random
 from typing import Any, Dict, List, Tuple
 
-from trainer_data import now_ts
+from core.trainer_data import now_ts
 
 
 # Objective: Keep values within a closed numeric range.

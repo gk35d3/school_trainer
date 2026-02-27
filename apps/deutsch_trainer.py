@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pygame
 
-from adaptive_core import (
+from core.adaptive_core import (
     build_state_from_events,
     clamp,
     latest_logged_difficulty,
@@ -14,7 +14,7 @@ from adaptive_core import (
     update_tag_stats,
     weighted_pick_tag,
 )
-from trainer_data import append_event, load_recent_events, now_ts
+from core.trainer_data import append_event, load_recent_events, now_ts
 
 # =========================
 # Config

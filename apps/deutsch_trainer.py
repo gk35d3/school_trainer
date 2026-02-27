@@ -367,7 +367,37 @@ def build_allowed_words() -> Set[str]:
     return allowed
 
 
+# Objective: Build a normalized set of known finite and infinitive verb forms.
+def build_known_verb_forms() -> Set[str]:
+    forms: Set[str] = set()
+    for v in COMMON_VERBS:
+        vl = v.lower()
+        forms.add(vl)
+        if vl.endswith("en") and len(vl) > 3:
+            stem = vl[:-2]
+            forms.add(stem + "t")
+            forms.add(stem + "st")
+            forms.add(stem + "e")
+    forms.update({
+        "bin", "bist", "ist", "sind", "seid", "war", "waren",
+        "habe", "hast", "hat", "habt", "hatte", "hatten",
+        "werde", "wirst", "wird", "wurden",
+        "gehe", "gehst", "geht", "ging", "gingen",
+        "komme", "kommst", "kommt", "kam", "kamen",
+        "laufe", "läufst", "läuft", "lief", "liefen",
+        "renne", "rennst", "rennt", "rannte", "rannten",
+        "fliege", "fliegst", "fliegt", "flog", "flogen",
+        "lese", "liest", "las", "lasen",
+        "schreibe", "schreibst", "schreibt", "schrieb", "schrieben",
+        "fahre", "fährst", "fährt", "fuhr", "fuhren",
+        "trage", "trägst", "trägt", "trug", "trugen",
+        "helfe", "hilfst", "hilft", "half", "halfen",
+    })
+    return forms
+
+
 ALLOWED_WORDS = build_allowed_words()
+KNOWN_VERB_FORMS = build_known_verb_forms()
 
 
 # Objective: Evaluate free-composition answer for grammar, punctuation, and keyword spelling.
@@ -420,7 +450,7 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
             issues.append(f"Subjekt fehlt: {item.subject_keywords[0]}")
 
     # Grammar: ensure enough finite-looking verbs for the current level.
-    verb_like = [w for w in words_lower if w.endswith(("t", "en"))]
+    verb_like = [w for w in words_lower if w in KNOWN_VERB_FORMS]
     if len(verb_like) < item.min_verbs:
         error_word_idxs.update(range(len(words)))
         issues.append(f"Zu wenige Verben (mindestens {item.min_verbs})")
@@ -439,7 +469,8 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
             break
 
     # Grammar: singular/plural agreement for the first detected verb form.
-    verb_idxs = [i for i, w in enumerate(words_lower) if w.endswith(("en", "t", "st"))]
+    subject_forms = set(subject_l)
+    verb_idxs = [i for i, w in enumerate(words_lower) if w in KNOWN_VERB_FORMS and w not in subject_forms]
     if verb_idxs:
         v = words_lower[verb_idxs[0]]
         if item.subject_number == "plural" and not v.endswith("en"):

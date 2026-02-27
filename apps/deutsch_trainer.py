@@ -193,25 +193,6 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     },
 ]
 
-QUESTION_EN_HINTS: Dict[str, str] = {
-    "Was machen Bienen?": "What do bees do?",
-    "Was macht ein Hund im Park?": "What does a dog do in the park?",
-    "Was machen Kinder in der Schule?": "What do children do in school?",
-    "Wie ist die Straße nach dem Regen?": "How is the street after the rain?",
-    "Was machen Vögel am Morgen?": "What do birds do in the morning?",
-    "Was macht die Katze in der Nacht?": "What does the cat do at night?",
-    "Was machen Feuerwehrleute bei einem Einsatz?": "What do firefighters do during an operation?",
-    "Was machen Forscher im Labor?": "What do researchers do in the lab?",
-    "Was machen Bauern auf dem Feld?": "What do farmers do in the field?",
-    "Was machen Musiker vor einem Auftritt?": "What do musicians do before a performance?",
-    "Was machen Astronauten in einer Raumstation?": "What do astronauts do in a space station?",
-    "Wie helfen Nachbarn einander nach einem Sturm?": "How do neighbors help each other after a storm?",
-    "Was passiert bei einer Überschwemmung?": "What happens during a flood?",
-    "Was passiert mit den Schienen bei starkem Regen?": "What happens to the rails in heavy rain?",
-    "Was macht ein Kind in der Nacht?": "What does a child do at night?",
-    "Was machen Menschen am Morgen nach einem Sturm?": "What do people do in the morning after a storm?",
-}
-
 ALLOWED_TAGS = [
     "noun_cap",
     "verb_end",
@@ -340,12 +321,9 @@ def pick_target_tag(state: Dict[str, Any], allowed_tags: List[str]) -> str:
     )
 
 
-# Objective: Render question text in German with an English comprehension hint.
-def build_bilingual_prompt(question_de: str) -> str:
+# Objective: Render question text only in German.
+def build_question_prompt(question_de: str) -> str:
     q = to_nfc(question_de)
-    hint = QUESTION_EN_HINTS.get(q, "")
-    if hint:
-        return f"Frage (DE): {q}\nQuestion (EN): {hint}"
     return f"Frage: {q}"
 
 
@@ -385,7 +363,7 @@ def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
 
     return WritingItem(
         instruction=instruction,
-        prompt=build_bilingual_prompt(str(tpl["question"])),
+        prompt=build_question_prompt(str(tpl["question"])),
         subject_keywords=tpl["subject_keywords"],
         subject_number=str(tpl["subject_number"]),
         subject_gender=str(tpl["subject_gender"]),

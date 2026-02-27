@@ -1,6 +1,6 @@
 import unittest
 
-from apps.deutsch_trainer import WritingItem, build_bilingual_prompt, evaluate_free_answer
+from apps.deutsch_trainer import WritingItem, build_question_prompt, evaluate_free_answer
 
 
 class GermanValidationTests(unittest.TestCase):
@@ -125,11 +125,11 @@ class GermanValidationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("Rechtschreibung", msg)
 
-    # Objective: Show German question plus English hint for comprehension support.
-    def test_build_bilingual_prompt(self):
-        prompt = build_bilingual_prompt("Was passiert bei einer Überschwemmung?")
-        self.assertIn("Frage (DE):", prompt)
-        self.assertIn("Question (EN):", prompt)
+    # Objective: Keep question prompts German-only.
+    def test_build_question_prompt_german_only(self):
+        prompt = build_question_prompt("Was passiert bei einer Überschwemmung?")
+        self.assertIn("Frage:", prompt)
+        self.assertNotIn("Question (EN):", prompt)
 
 
 if __name__ == "__main__":

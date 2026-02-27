@@ -48,7 +48,7 @@ class TimesGenerationTests(unittest.TestCase):
 
     # Objective: Ensure tiny hints map to anchor and strategy patterns.
     def test_micro_hint_examples(self):
-        self.assertEqual(micro_hint(Problem(10, 6, "*", [])), "Haeng 0 dran.")
+        self.assertEqual(micro_hint(Problem(10, 6, "*", [])), "Häng 0 dran.")
         self.assertEqual(micro_hint(Problem(9, 7, "*", [])), "9er: eins weniger.")
 
 

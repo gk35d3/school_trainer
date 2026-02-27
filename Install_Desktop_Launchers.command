@@ -6,8 +6,21 @@ DESKTOP_DIR="$HOME/Desktop"
 
 mkdir -p "$DESKTOP_DIR"
 
+# Remove old launcher names to keep Desktop clean.
+rm -f \
+  "$DESKTOP_DIR/Run_Math_Trainer.command" \
+  "$DESKTOP_DIR/Run_German_Trainer.command" \
+  "$DESKTOP_DIR/Run_1x1_Trainer.command" \
+  "$DESKTOP_DIR/Run_Uhrzeit_Trainer.command" \
+  "$DESKTOP_DIR/Update_Repo.command" \
+  "$DESKTOP_DIR/Mathe.command" \
+  "$DESKTOP_DIR/Deutsch.command" \
+  "$DESKTOP_DIR/1x1.command" \
+  "$DESKTOP_DIR/Uhrzeiten.command" \
+  "$DESKTOP_DIR/Update.command"
+
 # Generate standalone launchers that directly run the matching task.
-cat > "$DESKTOP_DIR/Run_Math_Trainer.command" <<EOF
+cat > "$DESKTOP_DIR/Mathe.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
@@ -16,7 +29,7 @@ osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1
 exit 0
 EOF
 
-cat > "$DESKTOP_DIR/Run_German_Trainer.command" <<EOF
+cat > "$DESKTOP_DIR/Deutsch.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
@@ -25,7 +38,25 @@ osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1
 exit 0
 EOF
 
-cat > "$DESKTOP_DIR/Update_Repo.command" <<EOF
+cat > "$DESKTOP_DIR/1x1.command" <<EOF
+#!/bin/bash
+set -euo pipefail
+cd "$REPO_DIR"
+python3 -m apps.times_trainer
+osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
+exit 0
+EOF
+
+cat > "$DESKTOP_DIR/Uhrzeiten.command" <<EOF
+#!/bin/bash
+set -euo pipefail
+cd "$REPO_DIR"
+python3 -m apps.uhrzeit_trainer
+osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
+exit 0
+EOF
+
+cat > "$DESKTOP_DIR/Update.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
@@ -35,7 +66,12 @@ osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1
 exit 0
 EOF
 
-chmod a+x "$DESKTOP_DIR/Run_Math_Trainer.command" "$DESKTOP_DIR/Run_German_Trainer.command" "$DESKTOP_DIR/Update_Repo.command"
+chmod a+x \
+  "$DESKTOP_DIR/Mathe.command" \
+  "$DESKTOP_DIR/Deutsch.command" \
+  "$DESKTOP_DIR/1x1.command" \
+  "$DESKTOP_DIR/Uhrzeiten.command" \
+  "$DESKTOP_DIR/Update.command"
 
 # Attach custom icons from internet-downloaded PNG files saved in this repo.
 apply_icon() {
@@ -52,9 +88,11 @@ apply_icon() {
   rm -f "$tmp_rsrc"
 }
 
-apply_icon "$REPO_DIR/assets/icons/math.png" "$DESKTOP_DIR/Run_Math_Trainer.command"
-apply_icon "$REPO_DIR/assets/icons/german.png" "$DESKTOP_DIR/Run_German_Trainer.command"
-apply_icon "$REPO_DIR/assets/icons/update.png" "$DESKTOP_DIR/Update_Repo.command"
+apply_icon "$REPO_DIR/assets/icons/math.png" "$DESKTOP_DIR/Mathe.command"
+apply_icon "$REPO_DIR/assets/icons/german.png" "$DESKTOP_DIR/Deutsch.command"
+apply_icon "$REPO_DIR/assets/icons/times.png" "$DESKTOP_DIR/1x1.command"
+apply_icon "$REPO_DIR/assets/icons/clock.png" "$DESKTOP_DIR/Uhrzeiten.command"
+apply_icon "$REPO_DIR/assets/icons/update.png" "$DESKTOP_DIR/Update.command"
 
 echo "Desktop launchers installed in: $DESKTOP_DIR"
 osascript -e 'display notification "Desktop launchers installed" with title "school_trainer"' >/dev/null 2>&1 || true

@@ -1,4 +1,5 @@
 import random
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -22,8 +23,8 @@ from core.trainer_data import append_event, load_recent_events, now_ts
 FPS = 60
 SESSION_QUESTIONS = 40
 SESSION_MAX_SECONDS = 15 * 60
-CORRECT_PAUSE_SECONDS = 0.55
-REVEAL_PAUSE_SECONDS = 1.0
+CORRECT_PAUSE_SECONDS = 1.35
+REVEAL_PAUSE_SECONDS = 2.60
 SLOW_HINT_SECONDS = 6.0
 MAX_TRIES_PER_PROBLEM = 2
 
@@ -61,6 +62,28 @@ HARD_FACTS = {(6, 7), (6, 8), (7, 8), (7, 9), (8, 9)}
 # =========================
 # Helpers
 # =========================
+# Objective: Normalize unicode text so umlauts render as single characters.
+def to_nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
+
+
+# Objective: Pick a font that reliably supports German umlauts.
+FONT_CACHE: Dict[int, pygame.font.Font] = {}
+
+
+def pick_unicode_font(size: int):
+    if size in FONT_CACHE:
+        return FONT_CACHE[size]
+    for name in ("DejaVu Sans", "Noto Sans", "Arial", "Liberation Sans"):
+        f = pygame.font.SysFont(name, size)
+        if f is not None:
+            FONT_CACHE[size] = f
+            return f
+    fallback = pygame.font.SysFont(None, size)
+    FONT_CACHE[size] = fallback
+    return fallback
+
+
 # Objective: Rebuild times state from the shared event log.
 def build_state_from_log(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     return build_state_from_events(
@@ -243,7 +266,7 @@ def micro_hint(problem: Problem) -> str:
     if 1 in (a, b):
         return "Mal 1 bleibt gleich."
     if 10 in (a, b):
-        return "Haeng 0 dran."
+        return "Häng 0 dran."
     if 2 in (a, b):
         return "Doppelt."
     if 5 in (a, b):
@@ -308,10 +331,10 @@ def main():
     clock = pygame.time.Clock()
 
     base = max(24, min(w, h) // 11)
-    font_task = pygame.font.SysFont(None, int(base * 1.6))
-    font_input = pygame.font.SysFont(None, int(base * 1.1))
-    font_hint = pygame.font.SysFont(None, int(base * 0.40))
-    font_small = pygame.font.SysFont(None, int(base * 0.32))
+    font_task = pick_unicode_font(int(base * 1.6))
+    font_input = pick_unicode_font(int(base * 1.1))
+    font_hint = pick_unicode_font(int(base * 0.40))
+    font_small = pick_unicode_font(int(base * 0.32))
 
     session_id = f"times_{int(now_ts())}"
     session_start_ts = now_ts()
@@ -515,11 +538,11 @@ def main():
         screen.fill((10, 10, 14))
 
         if completed:
-            surf = font_task.render("FERTIG", True, (80, 220, 120))
+            surf = font_task.render(to_nfc("FERTIG"), True, (80, 220, 120))
             rect = surf.get_rect(center=(w // 2, h // 2))
             screen.blit(surf, rect)
 
-            msg2 = font_hint.render("ESC", True, (160, 160, 170))
+            msg2 = font_hint.render(to_nfc("ESC"), True, (160, 160, 170))
             rect2 = msg2.get_rect(center=(w // 2, int(h * 0.60)))
             screen.blit(msg2, rect2)
 
@@ -527,12 +550,12 @@ def main():
             draw_progress_bar(screen, bar_rect, 1.0)
         else:
             top_line = "Tippe das Ergebnis. ENTER = prüfen."
-            surf_top = font_hint.render(top_line, True, (190, 190, 205))
+            surf_top = font_hint.render(to_nfc(top_line), True, (190, 190, 205))
             rect_top = surf_top.get_rect(center=(w // 2, int(h * 0.10)))
             screen.blit(surf_top, rect_top)
 
             task_text = f"{problem.a}  ×  {problem.b}  ="
-            surf_task = font_task.render(task_text, True, (240, 240, 240))
+            surf_task = font_task.render(to_nfc(task_text), True, (240, 240, 240))
             rect_task = surf_task.get_rect(center=(w // 2, int(h * 0.40)))
             screen.blit(surf_task, rect_task)
 
@@ -544,26 +567,26 @@ def main():
                 input_color = (230, 230, 230)
 
             shown_input = user_text if user_text else " "
-            surf_in = font_input.render(shown_input, True, input_color)
+            surf_in = font_input.render(to_nfc(shown_input), True, input_color)
             rect_in = surf_in.get_rect(center=(w // 2, int(h * 0.55)))
             screen.blit(surf_in, rect_in)
 
             if feedback == "wrong":
-                surf_msg = font_hint.render("Nochmal", True, (240, 90, 90))
+                surf_msg = font_hint.render(to_nfc("Nochmal"), True, (240, 90, 90))
                 rect_msg = surf_msg.get_rect(center=(w // 2, int(h * 0.65)))
                 screen.blit(surf_msg, rect_msg)
             elif feedback == "correct":
-                surf_msg = font_hint.render("Richtig", True, (80, 220, 120))
+                surf_msg = font_hint.render(to_nfc("Richtig"), True, (80, 220, 120))
                 rect_msg = surf_msg.get_rect(center=(w // 2, int(h * 0.65)))
                 screen.blit(surf_msg, rect_msg)
             elif feedback == "reveal":
                 reveal_text = f"Richtig: {problem.a}×{problem.b}={problem.answer}"
-                surf_msg = font_hint.render(reveal_text, True, (235, 210, 120))
+                surf_msg = font_hint.render(to_nfc(reveal_text), True, (235, 210, 120))
                 rect_msg = surf_msg.get_rect(center=(w // 2, int(h * 0.65)))
                 screen.blit(surf_msg, rect_msg)
 
             if hint_text and (feedback in ("wrong", "correct", "reveal")):
-                surf_hint = font_small.render(hint_text, True, (170, 170, 185))
+                surf_hint = font_small.render(to_nfc(hint_text), True, (170, 170, 185))
                 rect_hint = surf_hint.get_rect(center=(w // 2, int(h * 0.72)))
                 screen.blit(surf_hint, rect_hint)
 
@@ -572,7 +595,7 @@ def main():
             draw_progress_bar(screen, bar_rect, frac)
 
             qtxt = f"Frage {q_index + 1}/{SESSION_QUESTIONS}"
-            screen.blit(font_small.render(qtxt, True, (160, 160, 170)), (int(w * 0.10), int(h * 0.86)))
+            screen.blit(font_small.render(to_nfc(qtxt), True, (160, 160, 170)), (int(w * 0.10), int(h * 0.86)))
 
         pygame.display.flip()
 

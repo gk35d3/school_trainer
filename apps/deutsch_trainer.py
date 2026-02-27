@@ -168,6 +168,7 @@ ALLOWED_TAGS = [
 ]
 
 WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+")
+GERMAN_VOWELS = set("aeiouyäöü")
 
 # Objective: Keep spelling checks broad (not restricted to fixed answer verbs).
 COMMON_VERBS = [
@@ -398,6 +399,51 @@ def build_known_verb_forms() -> Set[str]:
 
 ALLOWED_WORDS = build_allowed_words()
 KNOWN_VERB_FORMS = build_known_verb_forms()
+IRREGULAR_PLURAL_VERBS = {"sind", "waren", "haben", "werden", "wurden", "hatten"}
+IRREGULAR_SINGULAR_VERBS = {"ist", "war", "hat", "wird", "hatte"}
+
+
+# Objective: Distinguish plausible free-vocabulary German words from obvious noise.
+def looks_like_german_word(word: str) -> bool:
+    w = word.lower()
+    if not (2 <= len(w) <= 24):
+        return False
+    if not any(ch in GERMAN_VOWELS for ch in w):
+        return False
+    if "q" in w and "qu" not in w:
+        return False
+    if re.search(r"(.)\1\1\1", w):
+        return False
+    if len(w) <= 4:
+        return True
+    common_endings = (
+        "en", "er", "e", "n", "t", "st", "ung", "heit", "keit", "lich",
+        "isch", "ig", "chen", "lein", "bar", "sam", "schaft", "tion",
+    )
+    return w.endswith(common_endings)
+
+
+# Objective: Flag typos conservatively so valid open-vocabulary words are not over-corrected.
+def is_likely_typo(word: str, candidate: str, dist: int) -> bool:
+    if dist > 1:
+        return False
+    if abs(len(word) - len(candidate)) > 1:
+        return False
+    return bool(word and candidate and (word[0] == candidate[0] or word[-1] == candidate[-1]))
+
+
+# Objective: Infer finite verb number for basic agreement checks, including irregular forms.
+def infer_verb_number(word: str) -> str:
+    w = word.lower()
+    if w in IRREGULAR_PLURAL_VERBS:
+        return "plural"
+    if w in IRREGULAR_SINGULAR_VERBS:
+        return "singular"
+    if w.endswith("en"):
+        return "plural"
+    if w.endswith(("t", "st", "e")):
+        return "singular"
+    return "unknown"
 
 
 # Objective: Evaluate free-composition answer for grammar, punctuation, and keyword spelling.
@@ -473,10 +519,11 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
     verb_idxs = [i for i, w in enumerate(words_lower) if w in KNOWN_VERB_FORMS and w not in subject_forms]
     if verb_idxs:
         v = words_lower[verb_idxs[0]]
-        if item.subject_number == "plural" and not v.endswith("en"):
+        v_number = infer_verb_number(v)
+        if item.subject_number == "plural" and v_number == "singular":
             error_word_idxs.add(verb_idxs[0])
             issues.append("Verbform passt nicht zum Plural")
-        if item.subject_number == "singular" and v.endswith("en"):
+        if item.subject_number == "singular" and v_number == "plural":
             error_word_idxs.add(verb_idxs[0])
             issues.append("Verbform passt nicht zum Singular")
 
@@ -484,10 +531,12 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
     for i, w in enumerate(words_lower):
         if w in ALLOWED_WORDS:
             continue
-        best = min((levenshtein(w, aw), aw) for aw in ALLOWED_WORDS)
-        if best[0] <= 1:
+        best_dist, best_word = min((levenshtein(w, aw), aw) for aw in ALLOWED_WORDS)
+        if is_likely_typo(w, best_word, best_dist):
             error_word_idxs.add(i)
-            issues.append(f"Rechtschreibung: '{words[i]}' -> '{best[1]}'")
+            issues.append(f"Rechtschreibung: '{words[i]}' -> '{best_word}'")
+        elif looks_like_german_word(w):
+            continue
         else:
             error_word_idxs.add(i)
             issues.append(f"Unbekannt/fehlerhaft: '{words[i]}'")

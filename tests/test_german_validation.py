@@ -36,6 +36,14 @@ class GermanValidationTests(unittest.TestCase):
         self.assertEqual(err_idxs, set())
         self.assertEqual(msg, "")
 
+    # Objective: Accept a short, correct Bee answer without false spelling flags.
+    def test_accepts_bee_sentence_bienen_sind_hier(self):
+        item = self.make_item(subject="bienen", number="plural", gender="f", min_words=3, min_verbs=1)
+        ok, err_idxs, msg = evaluate_free_answer(item, "Bienen sind hier.")
+        self.assertTrue(ok)
+        self.assertEqual(err_idxs, set())
+        self.assertEqual(msg, "")
+
     # Objective: Detect lowercase sentence starts.
     def test_rejects_lowercase_sentence_start(self):
         item = self.make_item(subject="hund", number="singular", gender="m")

@@ -50,6 +50,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Bienen?",
         "subject_keywords": ["bienen"],
+        "subject_number": "plural",
+        "subject_gender": "f",
         "tags": ["noun_cap", "verb_end", "sentence_flow", "punct"],
         "example": "Bienen fliegen und sammeln Nektar.",
         "level": 1,
@@ -57,6 +59,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was macht ein Hund im Park?",
         "subject_keywords": ["hund"],
+        "subject_number": "singular",
+        "subject_gender": "m",
         "tags": ["noun_cap", "verb_end", "double_consonant", "punct"],
         "example": "Ein Hund läuft und spielt im Park.",
         "level": 1,
@@ -64,6 +68,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Kinder in der Schule?",
         "subject_keywords": ["kinder"],
+        "subject_number": "plural",
+        "subject_gender": "n",
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
         "example": "Kinder lernen, lesen und schreiben in der Schule.",
         "level": 2,
@@ -71,6 +77,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Wie ist die Straße nach dem Regen?",
         "subject_keywords": ["straße"],
+        "subject_number": "singular",
+        "subject_gender": "f",
         "tags": ["noun_cap", "umlaut_esz", "punct", "sentence_flow"],
         "example": "Die Straße ist nass und glatt.",
         "level": 2,
@@ -78,6 +86,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Vögel am Morgen?",
         "subject_keywords": ["vögel"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "punct"],
         "example": "Vögel fliegen und singen am Morgen.",
         "level": 2,
@@ -85,6 +95,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was macht die Katze in der Nacht?",
         "subject_keywords": ["katze"],
+        "subject_number": "singular",
+        "subject_gender": "f",
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "punct"],
         "example": "Die Katze schleicht und jagt in der Nacht.",
         "level": 2,
@@ -92,6 +104,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Feuerwehrleute bei einem Einsatz?",
         "subject_keywords": ["feuerwehrleute"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "double_consonant", "verb_end", "sentence_flow", "punct"],
         "example": "Feuerwehrleute fahren schnell, löschen das Feuer und retten Menschen.",
         "level": 3,
@@ -99,6 +113,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Forscher im Labor?",
         "subject_keywords": ["forscher"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "sentence_flow", "punct"],
         "example": "Forscher untersuchen Proben, messen Werte und notieren Ergebnisse.",
         "level": 3,
@@ -106,6 +122,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Bauern auf dem Feld?",
         "subject_keywords": ["bauern"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
         "example": "Bauern pflanzen Gemüse, gießen die Felder und ernten später.",
         "level": 3,
@@ -113,6 +131,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Musiker vor einem Auftritt?",
         "subject_keywords": ["musiker"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
         "example": "Musiker üben zusammen, stimmen ihre Instrumente und hören aufeinander.",
         "level": 4,
@@ -120,6 +140,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Was machen Astronauten in einer Raumstation?",
         "subject_keywords": ["astronauten"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "cluster_sch_ch", "verb_end", "sentence_flow", "punct"],
         "example": "Astronauten forschen, reparieren Geräte und beobachten die Erde.",
         "level": 4,
@@ -127,6 +149,8 @@ QUESTION_TEMPLATES: List[Dict[str, Any]] = [
     {
         "question": "Wie helfen Nachbarn einander nach einem Sturm?",
         "subject_keywords": ["nachbarn"],
+        "subject_number": "plural",
+        "subject_gender": "m",
         "tags": ["noun_cap", "umlaut_esz", "verb_end", "sentence_flow", "punct"],
         "example": "Nachbarn helfen einander, räumen Wege frei und teilen Essen.",
         "level": 5,
@@ -144,6 +168,26 @@ ALLOWED_TAGS = [
 ]
 
 WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+")
+
+# Objective: Keep spelling checks broad (not restricted to fixed answer verbs).
+COMMON_VERBS = [
+    "sein", "haben", "werden", "machen", "gehen", "kommen", "sehen", "hören", "finden", "denken",
+    "geben", "nehmen", "bringen", "holen", "lassen", "bleiben", "laufen", "rennen", "springen", "fliegen",
+    "singen", "spielen", "lernen", "lesen", "schreiben", "rechnen", "arbeiten", "helfen", "retten", "löschen",
+    "bauen", "suchen", "fragen", "antworten", "zeigen", "sagen", "erzählen", "erklären", "verstehen", "üben",
+    "stimmen", "hören", "messen", "testen", "forschen", "beobachten", "notieren", "pflanzen", "gießen", "ernten",
+    "organisieren", "teilen", "räumen", "reparieren", "tragen", "tanzen", "schwimmen", "klettern", "jagen", "schleichen",
+]
+
+COMMON_FUNCTION_WORDS = {
+    "der", "die", "das", "ein", "eine", "einen", "einem", "einer", "den", "dem", "des",
+    "und", "oder", "aber", "denn", "weil", "dann", "danach", "später", "heute",
+    "im", "in", "am", "auf", "bei", "mit", "nach", "vor", "zu", "vom", "zum",
+    "ist", "sind", "war", "waren", "hat", "haben", "wird", "werden",
+    "er", "sie", "es", "ihn", "ihm", "ihr", "ihre", "sein", "seine", "seinen", "seinem",
+    "wir", "ihr", "euch", "uns", "ich", "du", "nicht", "sehr", "schnell", "langsam",
+    "nass", "glatt", "rutschig", "frei", "zusammen", "einander",
+}
 
 
 # =========================
@@ -213,6 +257,8 @@ class WritingItem:
     instruction: str
     prompt: str
     subject_keywords: List[str]
+    subject_number: str
+    subject_gender: str
     tags: List[str]
     kind: str
     example: str
@@ -274,6 +320,8 @@ def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
         instruction=instruction,
         prompt=f"Frage: {tpl['question']}",
         subject_keywords=tpl["subject_keywords"],
+        subject_number=str(tpl["subject_number"]),
+        subject_gender=str(tpl["subject_gender"]),
         tags=list(sorted(set(tpl["tags"] + [target_tag]))),
         kind="open_question",
         example=f"Beispiel: {tpl['example']}",
@@ -281,6 +329,45 @@ def make_open_question_item(target_tag: str, difficulty: float) -> WritingItem:
         min_verbs=min_verbs,
         level=int(tpl.get("level", 1)),
     )
+
+
+# Objective: Build a broad, internal German lexicon for strict spelling validation.
+def build_allowed_words() -> Set[str]:
+    allowed: Set[str] = set(COMMON_FUNCTION_WORDS)
+    for tpl in QUESTION_TEMPLATES:
+        for field in ("question", "example"):
+            for w in extract_words(str(tpl[field]).lower()):
+                allowed.add(w)
+        for s in tpl["subject_keywords"]:
+            allowed.add(s.lower())
+    for v in COMMON_VERBS:
+        vl = v.lower()
+        allowed.add(vl)
+        if vl.endswith("en") and len(vl) > 3:
+            stem = vl[:-2]
+            allowed.add(stem + "t")    # er/sie/es form
+            allowed.add(stem + "st")   # du form
+            allowed.add(stem + "e")    # ich form
+    # Irregular/high-frequency forms.
+    allowed.update({
+        "bin", "bist", "ist", "sind", "seid", "war", "waren",
+        "habe", "hast", "hat", "habt", "hatte", "hatten",
+        "werde", "wirst", "wird", "wurden",
+        "gehe", "gehst", "geht", "ging", "gingen",
+        "komme", "kommst", "kommt", "kam", "kamen",
+        "laufe", "läufst", "läuft", "lief", "liefen",
+        "renne", "rennst", "rennt", "rannte", "rannten",
+        "fliege", "fliegst", "fliegt", "flog", "flogen",
+        "lese", "liest", "las", "lasen",
+        "schreibe", "schreibst", "schreibt", "schrieb", "schrieben",
+        "fahre", "fährst", "fährt", "fuhr", "fuhren",
+        "trage", "trägst", "trägt", "trug", "trugen",
+        "helfe", "hilfst", "hilft", "half", "halfen",
+    })
+    return allowed
+
+
+ALLOWED_WORDS = build_allowed_words()
 
 
 # Objective: Evaluate free-composition answer for grammar, punctuation, and keyword spelling.
@@ -337,6 +424,44 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
     if len(verb_like) < item.min_verbs:
         error_word_idxs.update(range(len(words)))
         issues.append(f"Zu wenige Verben (mindestens {item.min_verbs})")
+
+    # Grammar: pronoun consistency with subject gender/number.
+    pronoun_idxs = [i for i, w in enumerate(words_lower) if w in {"er", "sie", "es"}]
+    allowed_pronouns = {"sie"} if item.subject_number == "plural" else {
+        "m": {"er"},
+        "f": {"sie"},
+        "n": {"es"},
+    }.get(item.subject_gender, {"er", "sie", "es"})
+    for i in pronoun_idxs:
+        if words_lower[i] not in allowed_pronouns:
+            error_word_idxs.add(i)
+            issues.append("Pronomen passt nicht zu Genus/Anzahl")
+            break
+
+    # Grammar: singular/plural agreement for the first detected verb form.
+    verb_idxs = [i for i, w in enumerate(words_lower) if w.endswith(("en", "t", "st"))]
+    if verb_idxs:
+        v = words_lower[verb_idxs[0]]
+        if item.subject_number == "plural" and not v.endswith("en"):
+            error_word_idxs.add(verb_idxs[0])
+            issues.append("Verbform passt nicht zum Plural")
+        if item.subject_number == "singular" and v.endswith("en"):
+            error_word_idxs.add(verb_idxs[0])
+            issues.append("Verbform passt nicht zum Singular")
+
+    # Spelling: every word must be valid or a very-close typo.
+    for i, w in enumerate(words_lower):
+        if w in ALLOWED_WORDS:
+            continue
+        best = min((levenshtein(w, aw), aw) for aw in ALLOWED_WORDS)
+        if best[0] <= 1:
+            error_word_idxs.add(i)
+            issues.append(f"Rechtschreibung: '{words[i]}' -> '{best[1]}'")
+        else:
+            error_word_idxs.add(i)
+            issues.append(f"Unbekannt/fehlerhaft: '{words[i]}'")
+        if len(issues) >= 3:
+            break
 
     ok = len(issues) == 0
     message = " | ".join(issues[:2]) if issues else ""

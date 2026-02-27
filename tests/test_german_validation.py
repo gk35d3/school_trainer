@@ -44,6 +44,22 @@ class GermanValidationTests(unittest.TestCase):
         self.assertEqual(err_idxs, set())
         self.assertEqual(msg, "")
 
+    # Objective: Accept a valid bee sentence variant with short free vocabulary.
+    def test_accepts_bee_sentence_bienen_sind_da(self):
+        item = self.make_item(subject="bienen", number="plural", gender="f", min_words=3, min_verbs=1)
+        ok, err_idxs, msg = evaluate_free_answer(item, "Bienen sind da.")
+        self.assertTrue(ok)
+        self.assertEqual(err_idxs, set())
+        self.assertEqual(msg, "")
+
+    # Objective: Accept a mixed sentence and match singular agreement to the target subject.
+    def test_accepts_mixed_sentence_with_hund_isst(self):
+        item = self.make_item(subject="hund", number="singular", gender="m", min_words=3, min_verbs=1)
+        ok, err_idxs, msg = evaluate_free_answer(item, "Bienen sind da und Hund isst etwas.")
+        self.assertTrue(ok)
+        self.assertEqual(err_idxs, set())
+        self.assertTrue(msg == "" or "Ziel" in msg)
+
     # Objective: Detect lowercase sentence starts.
     def test_rejects_lowercase_sentence_start(self):
         item = self.make_item(subject="hund", number="singular", gender="m")
@@ -93,6 +109,13 @@ class GermanValidationTests(unittest.TestCase):
         ok, _, msg = evaluate_free_answer(item, "Ein Hund spilen im Park.")
         self.assertFalse(ok)
         self.assertTrue("Rechtschreibung" in msg or "Unbekannt" in msg)
+
+    # Objective: Keep typo detection active after broadening open-vocabulary acceptance.
+    def test_rejects_spelling_typo_hund_istt(self):
+        item = self.make_item(subject="hund", number="singular", gender="m", min_words=3, min_verbs=1)
+        ok, _, msg = evaluate_free_answer(item, "Hund istt da.")
+        self.assertFalse(ok)
+        self.assertIn("Rechtschreibung", msg)
 
 
 if __name__ == "__main__":

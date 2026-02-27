@@ -178,6 +178,7 @@ COMMON_VERBS = [
     "bauen", "suchen", "fragen", "antworten", "zeigen", "sagen", "erzählen", "erklären", "verstehen", "üben",
     "stimmen", "hören", "messen", "testen", "forschen", "beobachten", "notieren", "pflanzen", "gießen", "ernten",
     "organisieren", "teilen", "räumen", "reparieren", "tragen", "tanzen", "schwimmen", "klettern", "jagen", "schleichen",
+    "essen", "fressen",
 ]
 
 COMMON_FUNCTION_WORDS = {
@@ -393,12 +394,15 @@ def build_known_verb_forms() -> Set[str]:
         "fahre", "fährst", "fährt", "fuhr", "fuhren",
         "trage", "trägst", "trägt", "trug", "trugen",
         "helfe", "hilfst", "hilft", "half", "halfen",
+        "esse", "isst", "esst", "aß", "aßen",
+        "fresse", "frisst", "fresst", "fraß", "fraßen",
     })
     return forms
 
 
 ALLOWED_WORDS = build_allowed_words()
 KNOWN_VERB_FORMS = build_known_verb_forms()
+ALLOWED_WORDS.update(KNOWN_VERB_FORMS)
 IRREGULAR_PLURAL_VERBS = {"sind", "waren", "haben", "werden", "wurden", "hatten"}
 IRREGULAR_SINGULAR_VERBS = {"ist", "war", "hat", "wird", "hatte"}
 
@@ -414,7 +418,8 @@ def looks_like_german_word(word: str) -> bool:
         return False
     if re.search(r"(.)\1\1\1", w):
         return False
-    if len(w) <= 4:
+    # Short words are frequent in free answers; avoid false negatives.
+    if len(w) <= 6:
         return True
     common_endings = (
         "en", "er", "e", "n", "t", "st", "ung", "heit", "keit", "lich",
@@ -426,6 +431,8 @@ def looks_like_german_word(word: str) -> bool:
 # Objective: Flag typos conservatively so valid open-vocabulary words are not over-corrected.
 def is_likely_typo(word: str, candidate: str, dist: int) -> bool:
     if dist > 1:
+        return False
+    if len(word) <= 3 or len(candidate) <= 3:
         return False
     if abs(len(word) - len(candidate)) > 1:
         return False
@@ -446,6 +453,28 @@ def infer_verb_number(word: str) -> str:
     return "unknown"
 
 
+# Objective: Find the subject occurrence that best matches a nearby verb candidate.
+def find_subject_verb_index(words_lower: List[str], subject_forms: Set[str], verb_positions: List[int]) -> Optional[int]:
+    subject_positions = [i for i, w in enumerate(words_lower) if w in subject_forms]
+    if not subject_positions or not verb_positions:
+        return None
+
+    best_verb = None
+    best_score = 10_000
+    for s in subject_positions:
+        after = [v for v in verb_positions if v > s]
+        if after:
+            v = after[0]
+            score = v - s
+        else:
+            v = min(verb_positions, key=lambda pos: abs(pos - s))
+            score = abs(v - s) + 100
+        if score < best_score:
+            best_score = score
+            best_verb = v
+    return best_verb
+
+
 # Objective: Evaluate free-composition answer for grammar, punctuation, and keyword spelling.
 def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int], str]:
     text = normalize_text(typed)
@@ -455,25 +484,25 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
     words = extract_words(text)
     words_lower = [w.lower() for w in words]
     error_word_idxs: Set[int] = set()
-    issues: List[str] = []
+    hard_issues: List[str] = []
+    soft_issues: List[str] = []
 
     # Grammar: sentence start capitalization.
     first_alpha = next((c for c in text if c.isalpha()), "")
     if first_alpha and not first_alpha.isupper():
         if words:
             error_word_idxs.add(0)
-        issues.append("Satzanfang groß schreiben")
+        hard_issues.append("Satzanfang groß schreiben")
 
     # Grammar: sentence-ending punctuation.
     if not text.endswith((".", "!", "?")):
         if words:
             error_word_idxs.add(len(words) - 1)
-        issues.append("Satzzeichen am Ende fehlt")
+        hard_issues.append("Satzzeichen am Ende fehlt")
 
     # Grammar: minimal sentence length.
     if len(words) < item.min_words:
-        error_word_idxs.update(range(len(words)))
-        issues.append(f"Antwort ist zu kurz (mindestens {item.min_words} Woerter)")
+        soft_issues.append(f"Antwort ist kurz (Ziel: {item.min_words}+ Woerter)")
 
     # Content anchor: subject noun from the question must appear.
     subject_l = [s.lower() for s in item.subject_keywords]
@@ -490,18 +519,17 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
                     best_target = s
         if best_idx >= 0 and best_dist <= 2:
             error_word_idxs.add(best_idx)
-            issues.append(f"Subjekt-Rechtschreibung prüfen: '{words[best_idx]}' (nahe bei '{best_target}')")
+            hard_issues.append(f"Subjekt-Rechtschreibung prüfen: '{words[best_idx]}' (nahe bei '{best_target}')")
         else:
             error_word_idxs.update(range(len(words)))
-            issues.append(f"Subjekt fehlt: {item.subject_keywords[0]}")
+            hard_issues.append(f"Subjekt fehlt: {item.subject_keywords[0]}")
 
     # Grammar: ensure enough finite-looking verbs for the current level.
     verb_like = [w for w in words_lower if w in KNOWN_VERB_FORMS]
     if len(verb_like) < item.min_verbs:
-        error_word_idxs.update(range(len(words)))
-        issues.append(f"Zu wenige Verben (mindestens {item.min_verbs})")
+        soft_issues.append(f"Wenig Verben (Ziel: {item.min_verbs}+)")
 
-    # Grammar: pronoun consistency with subject gender/number.
+    # Grammar: pronoun consistency with expected subject gender/number.
     pronoun_idxs = [i for i, w in enumerate(words_lower) if w in {"er", "sie", "es"}]
     allowed_pronouns = {"sie"} if item.subject_number == "plural" else {
         "m": {"er"},
@@ -511,21 +539,22 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
     for i in pronoun_idxs:
         if words_lower[i] not in allowed_pronouns:
             error_word_idxs.add(i)
-            issues.append("Pronomen passt nicht zu Genus/Anzahl")
+            hard_issues.append("Pronomen passt nicht zu Genus/Anzahl")
             break
 
-    # Grammar: singular/plural agreement for the first detected verb form.
+    # Grammar: singular/plural agreement using the verb nearest to the expected subject.
     subject_forms = set(subject_l)
-    verb_idxs = [i for i, w in enumerate(words_lower) if w in KNOWN_VERB_FORMS and w not in subject_forms]
-    if verb_idxs:
-        v = words_lower[verb_idxs[0]]
+    verb_positions = [i for i, w in enumerate(words_lower) if w in KNOWN_VERB_FORMS and w not in subject_forms]
+    matched_verb_idx = find_subject_verb_index(words_lower, subject_forms, verb_positions)
+    if matched_verb_idx is not None:
+        v = words_lower[matched_verb_idx]
         v_number = infer_verb_number(v)
         if item.subject_number == "plural" and v_number == "singular":
-            error_word_idxs.add(verb_idxs[0])
-            issues.append("Verbform passt nicht zum Plural")
+            error_word_idxs.add(matched_verb_idx)
+            hard_issues.append("Verbform passt nicht zum Plural")
         if item.subject_number == "singular" and v_number == "plural":
-            error_word_idxs.add(verb_idxs[0])
-            issues.append("Verbform passt nicht zum Singular")
+            error_word_idxs.add(matched_verb_idx)
+            hard_issues.append("Verbform passt nicht zum Singular")
 
     # Spelling: every word must be valid or a very-close typo.
     for i, w in enumerate(words_lower):
@@ -534,17 +563,18 @@ def evaluate_free_answer(item: WritingItem, typed: str) -> Tuple[bool, Set[int],
         best_dist, best_word = min((levenshtein(w, aw), aw) for aw in ALLOWED_WORDS)
         if is_likely_typo(w, best_word, best_dist):
             error_word_idxs.add(i)
-            issues.append(f"Rechtschreibung: '{words[i]}' -> '{best_word}'")
+            hard_issues.append(f"Rechtschreibung: '{words[i]}' -> '{best_word}'")
         elif looks_like_german_word(w):
             continue
         else:
             error_word_idxs.add(i)
-            issues.append(f"Unbekannt/fehlerhaft: '{words[i]}'")
-        if len(issues) >= 3:
+            hard_issues.append(f"Unbekannt/fehlerhaft: '{words[i]}'")
+        if len(hard_issues) >= 3:
             break
 
-    ok = len(issues) == 0
-    message = " | ".join(issues[:2]) if issues else ""
+    ok = len(hard_issues) == 0
+    lead = hard_issues if hard_issues else soft_issues
+    message = " | ".join(lead[:2]) if lead else ""
     return (ok, error_word_idxs, message)
 
 

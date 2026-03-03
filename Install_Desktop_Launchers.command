@@ -60,8 +60,12 @@ cat > "$DESKTOP_DIR/Update.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
-git fetch --all --prune
-git pull --ff-only
+mkdir -p .git/info
+grep -qxF 'data/trainer_data.jsonl merge=union' .git/info/attributes 2>/dev/null \
+  || echo 'data/trainer_data.jsonl merge=union' >> .git/info/attributes
+git add data/trainer_data.jsonl
+git commit -m "Latest session record"
+git pull --rebase --autostash --prune
 osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
 exit 0
 EOF

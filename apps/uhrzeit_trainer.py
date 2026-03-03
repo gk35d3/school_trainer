@@ -23,7 +23,7 @@ from core.trainer_data import append_event, load_recent_events, now_ts
 # =========================
 # Objective: Configure session pacing and adaptive behavior for analog clock reading.
 FPS = 60
-SESSION_QUESTIONS = 40
+SESSION_QUESTIONS = 30
 SESSION_MAX_SECONDS = 15 * 60
 CORRECT_PAUSE_SECONDS = 1.35
 REVEAL_PAUSE_SECONDS = 2.60

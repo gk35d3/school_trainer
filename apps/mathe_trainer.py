@@ -20,7 +20,7 @@ from core.trainer_data import append_event, load_recent_events, now_ts
 # =========================
 # Objective: Define session pacing and adaptive-tuning constants.
 FPS = 60
-SESSION_QUESTIONS = 40
+SESSION_QUESTIONS = 30
 CORRECT_PAUSE_SECONDS = 1.35
 
 RAMP_MAX_BONUS = 0.20

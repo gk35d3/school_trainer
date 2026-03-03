@@ -21,7 +21,7 @@ from core.trainer_data import append_event, load_recent_events, now_ts
 # =========================
 # Objective: Configure German session timing and adaptive behavior.
 FPS = 60
-SESSION_QUESTIONS = 40
+SESSION_QUESTIONS = 20
 CORRECT_PAUSE_SECONDS = 0.6
 RAMP_MAX_BONUS = 0.20
 TAG_WINDOW = 100

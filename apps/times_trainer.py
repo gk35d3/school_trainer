@@ -21,7 +21,7 @@ from core.trainer_data import append_event, load_recent_events, now_ts
 # =========================
 # Objective: Define session pacing and adaptive tuning for fast 1x1 recall.
 FPS = 60
-SESSION_QUESTIONS = 40
+SESSION_QUESTIONS = 20
 SESSION_MAX_SECONDS = 15 * 60
 CORRECT_PAUSE_SECONDS = 1.35
 REVEAL_PAUSE_SECONDS = 2.60

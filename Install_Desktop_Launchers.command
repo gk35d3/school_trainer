@@ -33,7 +33,7 @@ cat > "$DESKTOP_DIR/Deutsch.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
-python3 -m apps.deutsch_trainer
+python3 -m apps.deutsch_trainer2
 osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
 exit 0
 EOF
@@ -51,7 +51,7 @@ cat > "$DESKTOP_DIR/Uhrzeiten.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
-python3 -m apps.uhrzeit_trainer
+python3 -m apps.uhrzeit_trainer2
 osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
 exit 0
 EOF

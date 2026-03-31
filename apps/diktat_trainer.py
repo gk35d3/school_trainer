@@ -1,0 +1,926 @@
+"""
+Diktat-Trainer – German dictation for 2nd-grade students.
+
+Flow per sentence:
+  1. Audio plays automatically (macOS 'say' with German voice, pre-recorded to WAV).
+  2. Student types what they heard.  Press R or Space to replay at any time.
+  3. Enter submits.  Errors are categorised and explained on screen.
+  4. Space / Enter → next sentence.
+After 10 sentences: summary grouped by error category.
+"""
+
+import difflib
+import hashlib
+import os
+import random
+import re
+import subprocess
+import unicodedata
+from typing import Dict, List, Optional, Set, Tuple
+
+import pygame
+
+from core.trainer_data import append_event, load_recent_events, now_ts
+
+# ─────────────────────────────────────────────────────────────
+# Config
+# ─────────────────────────────────────────────────────────────
+FPS = 60
+SESSION_SENTENCES = 10
+APP_ID = "dictation"
+MAX_INPUT_CHARS = 120
+
+# macOS voice – Anna is the best built-in German neural voice.
+# Alternatives: Markus, Petra, Yannick
+GERMAN_VOICE = "Anna"
+SAY_RATE = 120           # words per minute; slower → clearer for children
+
+AUDIO_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "dictation_audio")
+
+# ─────────────────────────────────────────────────────────────
+# Error taxonomy
+# ─────────────────────────────────────────────────────────────
+ERROR_LABELS: Dict[str, str] = {
+    "großschreibung":  "Großschreibung (Nomen)",
+    "kleinschreibung": "Kleinschreibung",
+    "umlaut":          "Umlaut (ä, ö, ü)",
+    "sz_ss":           "ß oder ss",
+    "ie_ei":           "ie oder ei",
+    "doppelkonsonant": "Doppelkonsonant (ll, mm …)",
+    "ck":              "ck-Schreibung",
+    "tz":              "tz-Schreibung",
+    "fehlwort":        "Fehlendes Wort",
+    "extra_wort":      "Zusätzliches Wort",
+    "satzzeichen":     "Satzzeichen (Punkt)",
+    "rechtschreibung": "Rechtschreibung",
+}
+
+ERROR_TIPS: Dict[str, str] = {
+    "großschreibung":  "Nomen (Namenwörter) schreibt man groß.",
+    "kleinschreibung": "Dieses Wort schreibt man klein.",
+    "umlaut":          "Achte auf ä, ö und ü.",
+    "sz_ss":           "Nach kurzem Vokal: ss. Nach langem Vokal oder Diphthong: ß.",
+    "ie_ei":           "Verwechslung von ie und ei.",
+    "doppelkonsonant": "Nach kurzem Vokal verdoppelt man den Mitlaut.",
+    "ck":              "Nach kurzem Vokal schreibt man ck, nicht kk.",
+    "tz":              "Nach kurzem Vokal schreibt man tz, nicht z.",
+    "fehlwort":        "Ein Wort fehlt im Satz.",
+    "extra_wort":      "Dieses Wort gehört nicht in den Satz.",
+    "satzzeichen":     "Am Ende des Satzes steht ein Punkt.",
+    "rechtschreibung": "Das Wort ist falsch geschrieben.",
+}
+
+# ─────────────────────────────────────────────────────────────
+# Sentence bank  (120 sentences, ≤ 10 words, 2nd-grade level)
+# ─────────────────────────────────────────────────────────────
+SENTENCES: List[Dict] = [
+    # ── sp / st ──────────────────────────────────────────────
+    {"text": "Das Spiel macht großen Spaß im Garten.",        "tags": ["sp_st"]},
+    {"text": "Der Spatz sitzt auf dem Ast.",                  "tags": ["sp_st"]},
+    {"text": "Wir spielen zusammen auf dem Sportplatz.",      "tags": ["sp_st", "doppelkonsonant"]},
+    {"text": "Der Stern leuchtet hell in der Nacht.",         "tags": ["sp_st", "stummes_h"]},
+    {"text": "Der Stuhl steht neben dem Tisch.",              "tags": ["sp_st"]},
+    {"text": "Der Stein liegt auf der Straße.",               "tags": ["sp_st", "sz_ss"]},
+    {"text": "Er springt über die große Pfütze.",             "tags": ["sp_st", "sz_ss", "umlaut"]},
+    {"text": "Das Spinnennetz glitzert im Morgentau.",        "tags": ["sp_st", "tz", "doppelkonsonant"]},
+    {"text": "Der Storch kommt im Frühling zurück.",          "tags": ["sp_st", "umlaut"]},
+    # ── ch ───────────────────────────────────────────────────
+    {"text": "Ich lache laut über den Witz.",                 "tags": ["ch", "tz"]},
+    {"text": "Das Mädchen liest ein Buch.",                   "tags": ["ch", "umlaut", "großschreibung"]},
+    {"text": "Der Koch macht eine leckere Suppe.",            "tags": ["ch", "ck", "doppelkonsonant"]},
+    {"text": "Das Licht brennt in der Küche.",                "tags": ["ch", "umlaut", "doppelkonsonant"]},
+    {"text": "Wir sprechen leise in der Schule.",             "tags": ["ch", "sp_st"]},
+    {"text": "Das Buch liegt auf dem Tisch.",                 "tags": ["ch"]},
+    {"text": "Die Geschichte ist sehr spannend.",             "tags": ["ch", "sp_st", "doppelkonsonant"]},
+    {"text": "Das Märchen handelt von einer Hexe.",           "tags": ["ch", "umlaut"]},
+    {"text": "Die Schokolade schmeckt sehr gut.",             "tags": ["ch"]},
+    # ── Herbst ───────────────────────────────────────────────
+    {"text": "Die Blätter fallen bunt vom Baum.",             "tags": ["umlaut", "großschreibung"]},
+    {"text": "Der Kürbis ist groß und orange.",               "tags": ["umlaut", "sz_ss", "großschreibung"]},
+    {"text": "Im Herbst sind die Äpfel reif.",                "tags": ["umlaut"]},
+    {"text": "Die Kastanie liegt im nassen Laub.",            "tags": ["doppelkonsonant", "großschreibung"]},
+    {"text": "Wir gehen im Herbst spazieren.",                "tags": ["sp_st"]},
+    {"text": "Die bunten Blätter rascheln im Wind.",          "tags": ["umlaut"]},
+    {"text": "Der Nebel liegt über den Feldern.",             "tags": ["großschreibung", "stummes_h"]},
+    # ── Winter ───────────────────────────────────────────────
+    {"text": "Der Schneemann hat eine rote Nase.",            "tags": ["doppelkonsonant", "großschreibung"]},
+    {"text": "Die Kinder rodeln den Hang hinunter.",          "tags": ["großschreibung"]},
+    {"text": "Es ist kalt und das Eis glitzert.",             "tags": ["ei", "tz"]},
+    {"text": "Wir trinken heiße Schokolade im Winter.",       "tags": ["sz_ss", "ch"]},
+    {"text": "Die Schneeflocken fallen leise vom Himmel.",    "tags": ["doppelkonsonant", "stummes_h"]},
+    {"text": "Im Winter schläft der Bär im Wald.",            "tags": ["umlaut"]},
+    {"text": "Die Straße ist glatt und eisig.",               "tags": ["sp_st", "sz_ss", "ei"]},
+    {"text": "Die Kinder bauen einen Schneemann.",            "tags": ["doppelkonsonant"]},
+    # ── Frühling ─────────────────────────────────────────────
+    {"text": "Die Blüten duften schön im Frühling.",          "tags": ["umlaut", "stummes_h"]},
+    {"text": "Der Schmetterling fliegt über die Blumen.",     "tags": ["ie", "doppelkonsonant"]},
+    {"text": "Es wird warm und die Vögel singen.",            "tags": ["umlaut", "ng"]},
+    {"text": "Die Knospen öffnen sich in der Sonne.",         "tags": ["umlaut", "doppelkonsonant"]},
+    {"text": "Der Regenwurm kriecht durch die Erde.",         "tags": ["großschreibung", "ie"]},
+    {"text": "Im Frühling singen die Vögel schön.",           "tags": ["umlaut", "ng"]},
+    # ── Sommer ───────────────────────────────────────────────
+    {"text": "Wir schwimmen gerne im See.",                   "tags": ["doppelkonsonant", "ie"]},
+    {"text": "Die Sonne scheint hell und heiß.",              "tags": ["doppelkonsonant", "sz_ss", "ei"]},
+    {"text": "Wir bauen eine Sandburg am Strand.",            "tags": ["sp_st", "großschreibung"]},
+    {"text": "Im Urlaub grillen wir im Garten.",              "tags": ["doppelkonsonant", "großschreibung"]},
+    {"text": "Die Kinder planschen im kühlen Wasser.",        "tags": ["umlaut"]},
+    {"text": "Das Eis ist süß und kalt.",                     "tags": ["ei", "umlaut", "sz_ss"]},
+    {"text": "Am Strand findet sie eine Muschel.",            "tags": ["sp_st"]},
+    # ── eu ───────────────────────────────────────────────────
+    {"text": "Das neue Fahrrad ist blau und schön.",          "tags": ["eu", "stummes_h", "umlaut"]},
+    {"text": "Die Eule sitzt auf dem alten Baum.",            "tags": ["eu", "großschreibung"]},
+    {"text": "Wir freuen uns über das Geschenk.",             "tags": ["eu"]},
+    {"text": "Das Feuer brennt im Kamin.",                    "tags": ["eu", "doppelkonsonant"]},
+    {"text": "Das Flugzeug fliegt hoch über uns.",            "tags": ["eu", "tz", "ie"]},
+    {"text": "Die Laterne leuchtet hell in der Nacht.",       "tags": ["eu", "stummes_h"]},
+    # ── ei ───────────────────────────────────────────────────
+    {"text": "Das Kleid ist weiß mit kleinen Punkten.",       "tags": ["ei", "sz_ss"]},
+    {"text": "Wir reiten auf dem großen Pferd.",              "tags": ["ei", "sz_ss"]},
+    {"text": "Der kleine Hund heißt Bello.",                  "tags": ["ei", "sz_ss"]},
+    {"text": "Die Reise war lang und schön.",                 "tags": ["ei", "umlaut"]},
+    {"text": "Er zeigt auf den bunten Stein.",                "tags": ["ei"]},
+    {"text": "Das Eis leuchtet weiß im Sonnenlicht.",         "tags": ["ei", "sz_ss"]},
+    # ── ie ───────────────────────────────────────────────────
+    {"text": "Das Tier lebt im tiefen Wald.",                 "tags": ["ie"]},
+    {"text": "Wir spielen Fußball auf der Wiese.",            "tags": ["ie", "sp_st", "sz_ss"]},
+    {"text": "Die Fliege summt um das Essen.",                "tags": ["ie", "doppelkonsonant"]},
+    {"text": "Er schreibt einen langen Brief an Oma.",        "tags": ["ie", "ei"]},
+    {"text": "Vier Kinder sitzen im Kreis.",                  "tags": ["ie", "ei", "tz"]},
+    {"text": "Das Spiel macht Spaß auf der Wiese.",           "tags": ["ie", "sp_st", "sz_ss"]},
+    {"text": "Die Fliege sitzt auf dem Tisch.",               "tags": ["ie"]},
+    # ── ng / nk ──────────────────────────────────────────────
+    {"text": "Die Schlange liegt in der Sonne.",              "tags": ["ng", "doppelkonsonant"]},
+    {"text": "Wir singen ein schönes Lied zusammen.",         "tags": ["ng", "ie", "umlaut"]},
+    {"text": "Er trinkt Wasser aus der Trinkflasche.",        "tags": ["nk"]},
+    {"text": "Im Dunkeln leuchtet die Laterne.",              "tags": ["nk", "eu"]},
+    {"text": "Der Junge springt ins kühle Wasser.",           "tags": ["ng", "sp_st", "umlaut"]},
+    {"text": "Ich danke dir für das Geschenk.",               "tags": ["nk", "umlaut"]},
+    {"text": "Die Bank steht unter dem Baum.",                "tags": ["nk"]},
+    {"text": "Der Schmetterling hat bunte Flügel.",           "tags": ["ng", "umlaut", "doppelkonsonant"]},
+    # ── ck ───────────────────────────────────────────────────
+    {"text": "Die Jacke hängt an der Tür.",                   "tags": ["ck", "umlaut"]},
+    {"text": "Die Brücke führt über den Fluss.",              "tags": ["ck", "umlaut", "stummes_h", "doppelkonsonant"]},
+    {"text": "Er trägt einen schweren Rucksack.",             "tags": ["ck", "umlaut"]},
+    {"text": "Der Zucker ist süß und weiß.",                  "tags": ["ck", "umlaut", "sz_ss", "ei"]},
+    {"text": "Das Glück lacht dem Mutigen.",                  "tags": ["ck", "umlaut", "ch"]},
+    {"text": "Er schaut zurück auf den Weg.",                 "tags": ["ck"]},
+    {"text": "Die Mücke sticht den Arm.",                     "tags": ["ck", "umlaut", "sp_st"]},
+    # ── tz ───────────────────────────────────────────────────
+    {"text": "Es blitzt und donnert draußen.",                "tags": ["tz", "sz_ss", "doppelkonsonant"]},
+    {"text": "Die Katze schläft auf dem Sofa.",               "tags": ["tz", "umlaut"]},
+    {"text": "Er trägt eine bunte Mütze.",                    "tags": ["tz", "umlaut"]},
+    {"text": "Plötzlich regnete es sehr stark.",              "tags": ["tz", "umlaut", "sp_st"]},
+    {"text": "Der Platz ist groß und grün.",                  "tags": ["tz", "sz_ss", "umlaut"]},
+    {"text": "Der Witz macht alle zum Lachen.",               "tags": ["tz", "ch"]},
+    # ── ß / ss ───────────────────────────────────────────────
+    {"text": "Die Straße ist lang und gerade.",               "tags": ["sz_ss", "sp_st"]},
+    {"text": "Der Fußball liegt auf der Wiese.",              "tags": ["sz_ss", "ie"]},
+    {"text": "Es ist heiß im Sommer.",                        "tags": ["sz_ss", "ei"]},
+    {"text": "Ich weiß die Antwort auf die Frage.",           "tags": ["sz_ss", "ei"]},
+    {"text": "Der Fluss fließt durch die Stadt.",             "tags": ["sz_ss", "ie", "doppelkonsonant", "sp_st"]},
+    # ── Doppelkonsonant ──────────────────────────────────────
+    {"text": "Die Sonne scheint den ganzen Tag.",             "tags": ["doppelkonsonant"]},
+    {"text": "Der Ball rollt ins Tor.",                       "tags": ["doppelkonsonant"]},
+    {"text": "Wir essen zusammen zu Mittag.",                 "tags": ["doppelkonsonant"]},
+    {"text": "Im Zimmer brennt das Licht.",                   "tags": ["doppelkonsonant"]},
+    {"text": "Der Löffel liegt neben dem Teller.",            "tags": ["doppelkonsonant", "umlaut"]},
+    {"text": "Die Tasse ist voll mit Tee.",                   "tags": ["doppelkonsonant", "ie"]},
+    {"text": "Sie rennt schnell zur Schule.",                 "tags": ["doppelkonsonant"]},
+    # ── Umlaut ───────────────────────────────────────────────
+    {"text": "Die Äpfel hängen rot am Baum.",                 "tags": ["umlaut"]},
+    {"text": "Das Mädchen trägt ein buntes Kleid.",           "tags": ["umlaut", "ei"]},
+    {"text": "Die Bäume im Garten sind groß.",                "tags": ["umlaut", "sz_ss"]},
+    {"text": "Wir zählen die Punkte zusammen.",               "tags": ["umlaut"]},
+    {"text": "Der Bär schläft den ganzen Winter.",            "tags": ["umlaut"]},
+    {"text": "Die Vögel singen schön im Frühling.",           "tags": ["umlaut", "ng"]},
+    {"text": "Wir räumen das Zimmer auf.",                    "tags": ["umlaut"]},
+    {"text": "Die Mäuse verstecken sich im Keller.",          "tags": ["umlaut", "ck", "doppelkonsonant"]},
+    # ── Stummes h ────────────────────────────────────────────
+    {"text": "Wir fahren mit dem Zug in die Stadt.",          "tags": ["stummes_h", "sp_st"]},
+    {"text": "Er zahlt für die Bücher.",                      "tags": ["stummes_h", "umlaut"]},
+    {"text": "Das Reh springt über den Bach.",                "tags": ["stummes_h", "sp_st", "ch"]},
+    {"text": "Die Uhr zeigt zehn Uhr an.",                    "tags": ["stummes_h"]},
+    {"text": "Der Lehrer erklärt die Aufgabe.",               "tags": ["stummes_h", "umlaut"]},
+    {"text": "Wir wohnen in einem großen Haus.",              "tags": ["stummes_h", "sz_ss"]},
+    {"text": "Er nimmt das Buch in die Hand.",                "tags": ["stummes_h"]},
+    # ── Großschreibung focus ─────────────────────────────────
+    {"text": "Der Hund bellt laut im Garten.",                "tags": ["großschreibung"]},
+    {"text": "Das Buch liegt auf dem Schreibtisch.",          "tags": ["großschreibung", "sp_st"]},
+    {"text": "Wir lernen in der Schule lesen.",               "tags": ["großschreibung"]},
+    {"text": "Der Apfel ist rot und saftig.",                 "tags": ["großschreibung"]},
+    {"text": "Die Sonne scheint durch das Fenster.",          "tags": ["großschreibung", "stummes_h"]},
+    {"text": "Das Kind spielt mit dem Ball.",                 "tags": ["großschreibung"]},
+    {"text": "Der Vogel singt auf dem Ast.",                  "tags": ["großschreibung"]},
+    # ── v ────────────────────────────────────────────────────
+    {"text": "Der Vogel singt ein schönes Lied.",             "tags": ["großschreibung", "ie", "umlaut"]},
+    {"text": "Unser Vater fährt mit dem Auto.",               "tags": ["stummes_h"]},
+    {"text": "Im November wird es kalt und dunkel.",          "tags": ["doppelkonsonant"]},
+    {"text": "Der Vulkan ist sehr groß und heiß.",            "tags": ["sz_ss", "ei"]},
+    # ── qu ───────────────────────────────────────────────────
+    {"text": "Die Qualle lebt im tiefen Meer.",               "tags": ["ie"]},
+    {"text": "Das Aquarium steht im Wohnzimmer.",             "tags": []},
+    # ── Gemischt ─────────────────────────────────────────────
+    {"text": "Die Katze jagt die Maus im Garten.",            "tags": ["großschreibung"]},
+    {"text": "Er liest gerne spannende Bücher.",              "tags": ["ie", "umlaut", "sp_st", "doppelkonsonant"]},
+    {"text": "Die Kinder tanzen fröhlich zur Musik.",         "tags": ["umlaut"]},
+    {"text": "Wir schreiben einen Brief an Oma.",             "tags": ["ie", "ei"]},
+    {"text": "Er rechnet die Aufgabe richtig.",               "tags": ["ie", "ch"]},
+    {"text": "Im Herbst ist es oft neblig und nass.",         "tags": ["doppelkonsonant"]},
+    {"text": "Der Schrank steht im Schlafzimmer.",            "tags": ["sp_st", "ch"]},
+    {"text": "Der Elefant ist viel größer als der Hund.",     "tags": ["sz_ss", "umlaut"]},
+    {"text": "Sie läuft schneller als ihr Bruder.",           "tags": ["umlaut", "doppelkonsonant"]},
+    {"text": "Er schläft noch und träumt schön.",             "tags": ["umlaut", "eu", "stummes_h"]},
+    {"text": "Das Mädchen malt ein buntes Bild.",             "tags": ["umlaut", "großschreibung"]},
+    {"text": "Die Kinder lachen laut auf dem Spielplatz.",    "tags": ["ch", "sp_st"]},
+    {"text": "Er schenkt ihr eine schöne Blume.",             "tags": ["umlaut"]},
+    {"text": "Das Eichhörnchen klettert auf den Baum.",       "tags": ["ei", "ch", "umlaut"]},
+]
+
+# ─────────────────────────────────────────────────────────────
+# Audio helpers
+# ─────────────────────────────────────────────────────────────
+
+def _audio_path(text: str) -> str:
+    h = hashlib.md5(text.encode()).hexdigest()[:12]
+    return os.path.join(AUDIO_DIR, f"{h}.wav")
+
+
+def ensure_audio(text: str) -> Optional[str]:
+    """Pre-record text to a WAV file via macOS 'say'. Returns path or None."""
+    os.makedirs(AUDIO_DIR, exist_ok=True)
+    wav_path = _audio_path(text)
+    if os.path.exists(wav_path):
+        return wav_path
+    aiff_path = wav_path.replace(".wav", ".aiff")
+    try:
+        subprocess.run(
+            ["say", "-v", GERMAN_VOICE, "-r", str(SAY_RATE), "-o", aiff_path, "--", text],
+            check=True, capture_output=True, timeout=20,
+        )
+        subprocess.run(
+            ["afconvert", "-f", "WAVE", "-d", "LEI16@22050", aiff_path, wav_path],
+            check=True, capture_output=True, timeout=15,
+        )
+    except Exception:
+        # Fallback: try direct output format flag (older macOS)
+        try:
+            subprocess.run(
+                ["say", "-v", GERMAN_VOICE, "-r", str(SAY_RATE),
+                 "-o", wav_path, "--data-format=LEF32@22050", "--", text],
+                check=True, capture_output=True, timeout=20,
+            )
+        except Exception:
+            return None
+    finally:
+        if os.path.exists(aiff_path):
+            try:
+                os.remove(aiff_path)
+            except OSError:
+                pass
+    return wav_path if os.path.exists(wav_path) else None
+
+
+def play_audio(path: Optional[str]) -> None:
+    if path is None:
+        return
+    try:
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play()
+    except Exception:
+        pass
+
+
+def stop_audio() -> None:
+    try:
+        pygame.mixer.music.stop()
+    except Exception:
+        pass
+
+
+def audio_playing() -> bool:
+    try:
+        return bool(pygame.mixer.music.get_busy())
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────
+# Error analysis
+# ─────────────────────────────────────────────────────────────
+
+def _nfc(s: str) -> str:
+    return unicodedata.normalize("NFC", s)
+
+
+def _classify_word_error(expected: str, actual: str) -> str:
+    """Return the most likely error category for one mismatched word."""
+    exp = _nfc(expected.lower().rstrip(".,!?;:"))
+    act = _nfc(actual.lower().rstrip(".,!?;:"))
+
+    # Capitalisation
+    if expected and actual:
+        if expected[0].isupper() and actual[0].islower():
+            return "großschreibung"
+        if expected[0].islower() and actual[0].isupper():
+            return "kleinschreibung"
+
+    # ß ↔ ss
+    if exp.replace("ß", "ss") == act or act.replace("ß", "ss") == exp:
+        return "sz_ss"
+
+    # Umlaut missing or wrong
+    def strip_umlaut(s: str) -> str:
+        return s.replace("ä", "a").replace("ö", "o").replace("ü", "u")
+    if strip_umlaut(exp) == strip_umlaut(act) and exp != act:
+        return "umlaut"
+
+    # ie ↔ ei
+    if exp.replace("ie", "ei") == act or exp.replace("ei", "ie") == act:
+        return "ie_ei"
+
+    # Double consonant → single
+    for cc in ("ll", "mm", "nn", "pp", "rr", "ss", "tt", "ff", "bb", "gg", "dd"):
+        c = cc[0]
+        if exp.replace(cc, c) == act or act.replace(cc, c) == exp:
+            return "doppelkonsonant"
+
+    # ck ↔ k
+    if exp.replace("ck", "k") == act or act.replace("ck", "k") == exp:
+        return "ck"
+
+    # tz ↔ z / ts
+    if exp.replace("tz", "z") == act or act.replace("tz", "z") == exp:
+        return "tz"
+
+    return "rechtschreibung"
+
+
+def analyse_errors(expected: str, actual: str) -> List[Dict]:
+    """
+    Return a list of error dicts:
+      {category, expected_word, actual_word, tip}
+    """
+    errors: List[Dict] = []
+
+    exp_words = expected.strip().split()
+    act_words = actual.strip().split() if actual.strip() else []
+
+    matcher = difflib.SequenceMatcher(
+        None,
+        [w.lower().rstrip(".,!?;:") for w in exp_words],
+        [w.lower().rstrip(".,!?;:") for w in act_words],
+        autojunk=False,
+    )
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace":
+            for k in range(max(i2 - i1, j2 - j1)):
+                ew = exp_words[i1 + k] if i1 + k < i2 else ""
+                aw = act_words[j1 + k] if j1 + k < j2 else ""
+                if not ew:
+                    cat = "extra_wort"
+                elif not aw:
+                    cat = "fehlwort"
+                else:
+                    cat = _classify_word_error(ew, aw)
+                errors.append({
+                    "category": cat,
+                    "expected_word": ew,
+                    "actual_word": aw,
+                    "tip": ERROR_TIPS.get(cat, ""),
+                })
+        elif tag == "delete":
+            for i in range(i1, i2):
+                errors.append({
+                    "category": "fehlwort",
+                    "expected_word": exp_words[i],
+                    "actual_word": "",
+                    "tip": ERROR_TIPS["fehlwort"],
+                })
+        elif tag == "insert":
+            for j in range(j1, j2):
+                errors.append({
+                    "category": "extra_wort",
+                    "expected_word": "",
+                    "actual_word": act_words[j],
+                    "tip": ERROR_TIPS["extra_wort"],
+                })
+
+    # Punctuation: missing final period
+    exp_stripped = expected.rstrip()
+    act_stripped = actual.rstrip()
+    if exp_stripped.endswith(".") and not act_stripped.endswith("."):
+        errors.append({
+            "category": "satzzeichen",
+            "expected_word": ".",
+            "actual_word": "",
+            "tip": ERROR_TIPS["satzzeichen"],
+        })
+
+    return errors
+
+
+def wrong_word_indices(expected: str, actual: str) -> Set[int]:
+    """Return 0-based indices of words in `actual` that differ from expected."""
+    exp_words = expected.strip().split()
+    act_words = actual.strip().split() if actual.strip() else []
+    bad: Set[int] = set()
+    matcher = difflib.SequenceMatcher(
+        None,
+        [w.lower().rstrip(".,!?;:") for w in exp_words],
+        [w.lower().rstrip(".,!?;:") for w in act_words],
+        autojunk=False,
+    )
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            for j in range(j1, j2):
+                bad.add(j)
+    return bad
+
+
+# ─────────────────────────────────────────────────────────────
+# UI helpers
+# ─────────────────────────────────────────────────────────────
+
+FONT_CACHE: Dict[int, pygame.font.Font] = {}
+
+
+def font(size: int) -> pygame.font.Font:
+    if size not in FONT_CACHE:
+        for name in ("DejaVu Sans", "Noto Sans", "Arial", "Liberation Sans"):
+            f = pygame.font.SysFont(name, size)
+            if f:
+                FONT_CACHE[size] = f
+                return f
+        FONT_CACHE[size] = pygame.font.SysFont(None, size)
+    return FONT_CACHE[size]
+
+
+def to_nfc(s: str) -> str:
+    return unicodedata.normalize("NFC", s)
+
+
+def wrap_text(f: pygame.font.Font, text: str, max_w: int) -> List[str]:
+    words = text.split()
+    lines: List[str] = []
+    cur = ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if f.size(test)[0] <= max_w:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+
+def draw_text_block(
+    screen, f, text: str, x: int, y: int, w: int,
+    color=(240, 240, 240), line_gap: int = 6,
+):
+    lines = wrap_text(f, to_nfc(text), w - 20)
+    lh = f.get_linesize() + line_gap
+    cy = y + 10
+    for line in lines:
+        surf = f.render(line, True, color)
+        screen.blit(surf, surf.get_rect(midtop=(x + w // 2, cy)))
+        cy += lh
+
+
+def draw_answer_with_errors(
+    screen, f, text: str, x: int, y: int, w: int,
+    bad_indices: Set[int], default_color=(240, 240, 240), line_gap: int = 6,
+):
+    words = text.split()
+    if not words:
+        return
+    left, right = x + 10, x + w - 10
+    cx, cy = left, y + 10
+    lh = f.get_linesize() + line_gap
+    for i, word in enumerate(words):
+        token = word + (" " if i < len(words) - 1 else "")
+        tw = f.size(to_nfc(token))[0]
+        if cx + tw > right:
+            cx, cy = left, cy + lh
+        col = (240, 80, 80) if i in bad_indices else default_color
+        surf = f.render(to_nfc(token), True, col)
+        screen.blit(surf, (cx, cy))
+        cx += tw
+
+
+def draw_progress_bar(screen, rect, frac: float, color=(100, 180, 100)):
+    pygame.draw.rect(screen, (60, 60, 60), rect, border_radius=4)
+    filled = rect.copy()
+    filled.width = max(0, int(rect.width * frac))
+    if filled.width:
+        pygame.draw.rect(screen, color, filled, border_radius=4)
+
+
+def draw_speaker_icon(screen, cx: int, cy: int, size: int, active: bool):
+    """Simple speaker shape."""
+    col = (120, 200, 255) if active else (100, 100, 130)
+    # Body
+    body = pygame.Rect(cx - size // 2, cy - size // 3, size // 2, size * 2 // 3)
+    pygame.draw.rect(screen, col, body)
+    # Cone
+    pts = [
+        (cx, cy - size // 3),
+        (cx + size // 2, cy - size * 2 // 3),
+        (cx + size // 2, cy + size * 2 // 3),
+        (cx, cy + size // 3),
+    ]
+    pygame.draw.polygon(screen, col, pts)
+    # Sound waves when active
+    if active:
+        for r in (size * 3 // 4, size):
+            pygame.draw.arc(
+                screen, col,
+                pygame.Rect(cx + size // 4, cy - r // 2, r, r),
+                -0.8, 0.8, max(1, size // 12),
+            )
+
+
+# ─────────────────────────────────────────────────────────────
+# Main
+# ─────────────────────────────────────────────────────────────
+
+def main():
+    pygame.init()
+    pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
+    pygame.display.set_caption("Diktat-Trainer")
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    sw, sh = screen.get_size()
+    clock = pygame.time.Clock()
+
+    base = max(22, min(sw, sh) // 11)
+    f_title  = font(int(base * 1.0))
+    f_main   = font(int(base * 0.85))
+    f_input  = font(int(base * 0.80))
+    f_small  = font(int(base * 0.38))
+    f_hint   = font(int(base * 0.32))
+
+    BG       = (20,  22,  35)
+    CARD     = (32,  36,  54)
+    ACCENT   = (80, 160, 255)
+    GREEN    = (80, 200, 100)
+    RED      = (240, 80,  80)
+    YELLOW   = (255, 220,  60)
+    WHITE    = (240, 240, 240)
+    GRAY     = (130, 130, 150)
+
+    session_id = f"dictation_{int(now_ts())}"
+    chosen = random.sample(SENTENCES, min(SESSION_SENTENCES, len(SENTENCES)))
+
+    # ── Pre-record audio ─────────────────────────────────────
+    audio_paths: List[Optional[str]] = [None] * len(chosen)
+    screen.fill(BG)
+    msg = font(int(base * 0.7)).render(to_nfc("Vorbereitung …"), True, WHITE)
+    screen.blit(msg, msg.get_rect(center=(sw // 2, sh // 2)))
+    pygame.display.flip()
+
+    for i, s in enumerate(chosen):
+        # Pump events so window stays responsive
+        pygame.event.pump()
+        audio_paths[i] = ensure_audio(s["text"])
+        # Draw progress
+        screen.fill(BG)
+        screen.blit(msg, msg.get_rect(center=(sw // 2, sh // 2 - base)))
+        bar = pygame.Rect(sw // 4, sh // 2 + 10, sw // 2, base // 2)
+        draw_progress_bar(screen, bar, (i + 1) / len(chosen))
+        pygame.display.flip()
+
+    # ── Session state ─────────────────────────────────────────
+    idx          = 0          # current sentence index
+    state        = "input"    # "input" | "feedback" | "summary"
+    user_text    = ""
+    errors: List[Dict]  = []
+    bad_idx: Set[int]   = set()
+    session_errors: List[Dict] = []   # all errors across session
+
+    append_event({
+        "type": "session_start", "app_id": APP_ID,
+        "session_id": session_id, "ts": now_ts(),
+        "num_sentences": len(chosen),
+    })
+
+    # Auto-play first sentence
+    play_audio(audio_paths[idx])
+
+    running = True
+    while running:
+        dt = clock.tick(FPS)
+        playing = audio_playing()
+
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                running = False
+            elif ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    running = False
+
+                elif state == "input":
+                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        # Submit
+                        errors = analyse_errors(chosen[idx]["text"], user_text)
+                        bad_idx = wrong_word_indices(chosen[idx]["text"], user_text)
+                        stop_audio()
+                        state = "feedback"
+                        # Log
+                        append_event({
+                            "type": "attempt", "app_id": APP_ID,
+                            "session_id": session_id,
+                            "sentence": chosen[idx]["text"],
+                            "user_text": user_text,
+                            "error_count": len(errors),
+                            "correct": len(errors) == 0,
+                            "error_categories": list({e["category"] for e in errors}),
+                            "ts": now_ts(),
+                        })
+                        session_errors.extend(errors)
+
+                    elif ev.key in (pygame.K_r, pygame.K_SPACE) and not user_text:
+                        # Replay if nothing typed yet (Space) or always with R
+                        stop_audio()
+                        play_audio(audio_paths[idx])
+
+                    elif ev.key == pygame.K_r:
+                        stop_audio()
+                        play_audio(audio_paths[idx])
+
+                    elif ev.key == pygame.K_BACKSPACE:
+                        if ev.mod & pygame.KMOD_CTRL:
+                            # Delete last word
+                            user_text = re.sub(r"\S+\s*$", "", user_text)
+                        else:
+                            user_text = user_text[:-1]
+
+                    elif ev.unicode and len(user_text) < MAX_INPUT_CHARS:
+                        user_text += ev.unicode
+
+                elif state == "feedback":
+                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        idx += 1
+                        if idx >= len(chosen):
+                            state = "summary"
+                            append_event({
+                                "type": "session_end", "app_id": APP_ID,
+                                "session_id": session_id,
+                                "total_errors": len(session_errors),
+                                "ts": now_ts(),
+                            })
+                        else:
+                            user_text = ""
+                            errors = []
+                            bad_idx = set()
+                            state = "input"
+                            play_audio(audio_paths[idx])
+
+                elif state == "summary":
+                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
+                                  pygame.K_SPACE, pygame.K_q):
+                        running = False
+
+        # ── Draw ─────────────────────────────────────────────
+        screen.fill(BG)
+
+        if state == "input":
+            _draw_input(screen, sw, sh, chosen, idx, user_text, playing,
+                        audio_paths, f_title, f_main, f_input, f_small, f_hint,
+                        BG, CARD, ACCENT, GREEN, WHITE, GRAY, YELLOW, base)
+
+        elif state == "feedback":
+            _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
+                           f_title, f_main, f_input, f_small, f_hint,
+                           BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
+
+        elif state == "summary":
+            _draw_summary(screen, sw, sh, chosen, session_errors,
+                          f_title, f_main, f_small, f_hint,
+                          BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
+
+        pygame.display.flip()
+
+    pygame.quit()
+
+
+# ─────────────────────────────────────────────────────────────
+# Draw helpers  (broken out to keep main() readable)
+# ─────────────────────────────────────────────────────────────
+
+def _draw_input(screen, sw, sh, chosen, idx, user_text, playing,
+                audio_paths, f_title, f_main, f_input, f_small, f_hint,
+                BG, CARD, ACCENT, GREEN, WHITE, GRAY, YELLOW, base):
+
+    margin = int(sw * 0.06)
+    content_w = sw - 2 * margin
+
+    # Header
+    header = to_nfc(f"Diktat  –  Satz {idx + 1} von {len(chosen)}")
+    hs = f_title.render(header, True, ACCENT)
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.04))))
+
+    # Speaker card
+    card_h = int(sh * 0.22)
+    card_y = int(sh * 0.14)
+    card_rect = pygame.Rect(margin, card_y, content_w, card_h)
+    pygame.draw.rect(screen, CARD, card_rect, border_radius=12)
+
+    spk_x = margin + int(content_w * 0.12)
+    spk_y = card_y + card_h // 2
+    draw_speaker_icon(screen, spk_x, spk_y, base, playing)
+
+    instr_lines = [
+        to_nfc("Hör gut zu und tippe den Satz."),
+        to_nfc("[R] = nochmal hören"),
+    ]
+    iy = card_y + card_h // 2 - f_main.get_linesize()
+    for line in instr_lines:
+        ls = f_small.render(line, True, GRAY if not playing else WHITE)
+        screen.blit(ls, ls.get_rect(midleft=(margin + int(content_w * 0.22), iy)))
+        iy += f_small.get_linesize() + 4
+
+    if playing:
+        dot_y = card_y + card_h - base // 2
+        for i in range(5):
+            bh = int(base * 0.15 * (1 + ((pygame.time.get_ticks() // 120 + i) % 5) * 0.5))
+            bx = sw // 2 - 40 + i * 20
+            pygame.draw.rect(screen, ACCENT,
+                             pygame.Rect(bx, dot_y - bh // 2, 10, bh), border_radius=3)
+
+    # Input box
+    box_y = int(sh * 0.44)
+    box_h = int(sh * 0.20)
+    box_rect = pygame.Rect(margin, box_y, content_w, box_h)
+    pygame.draw.rect(screen, CARD, box_rect, border_radius=10)
+    pygame.draw.rect(screen, ACCENT, box_rect, 2, border_radius=10)
+
+    display_text = to_nfc(user_text + "│")
+    lines = wrap_text(f_input, display_text, content_w - 24)
+    lh = f_input.get_linesize() + 4
+    ty = box_y + 12
+    for line in lines:
+        ls = f_input.render(line, True, WHITE)
+        screen.blit(ls, (margin + 12, ty))
+        ty += lh
+
+    # Hint
+    hint = to_nfc("[Eingabe] = fertig   [R] = nochmal hören   [Strg+Rück] = Wort löschen")
+    hs2 = f_hint.render(hint, True, GRAY)
+    screen.blit(hs2, hs2.get_rect(midbottom=(sw // 2, sh - int(sh * 0.03))))
+
+    # Progress bar
+    bar_h = max(6, sh // 80)
+    bar_rect = pygame.Rect(margin, sh - int(sh * 0.07), content_w, bar_h)
+    draw_progress_bar(screen, bar_rect, idx / len(chosen))
+
+
+def _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
+                   f_title, f_main, f_input, f_small, f_hint,
+                   BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
+
+    margin = int(sw * 0.06)
+    content_w = sw - 2 * margin
+
+    # Header
+    if not errors:
+        header = to_nfc("Richtig! ✓")
+        hcol = GREEN
+    else:
+        n = len(errors)
+        header = to_nfc(f"{n} Fehler")
+        hcol = RED
+    hs = f_title.render(header, True, hcol)
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.04))))
+
+    # Correct sentence (green)
+    cy = int(sh * 0.14)
+    label_corr = f_small.render(to_nfc("Richtig:"), True, GREEN)
+    screen.blit(label_corr, (margin, cy))
+    cy += f_small.get_linesize() + 4
+    card_h = int(sh * 0.12)
+    pygame.draw.rect(screen, CARD, pygame.Rect(margin, cy, content_w, card_h), border_radius=8)
+    draw_text_block(screen, f_main, chosen[idx]["text"], margin, cy, content_w, color=GREEN)
+    cy += card_h + int(sh * 0.02)
+
+    # Student's answer
+    label_ans = f_small.render(to_nfc("Dein Satz:"), True, WHITE)
+    screen.blit(label_ans, (margin, cy))
+    cy += f_small.get_linesize() + 4
+    ans_card = pygame.Rect(margin, cy, content_w, int(sh * 0.12))
+    pygame.draw.rect(screen, CARD, ans_card, border_radius=8)
+    draw_answer_with_errors(screen, f_main, user_text or "–",
+                            margin, cy, content_w, bad_idx, WHITE)
+    cy += ans_card.height + int(sh * 0.02)
+
+    # Error list
+    if errors:
+        label_err = f_small.render(to_nfc("Fehler:"), True, YELLOW)
+        screen.blit(label_err, (margin, cy))
+        cy += f_small.get_linesize() + 6
+        err_card_h = int(sh * 0.25)
+        err_card = pygame.Rect(margin, cy, content_w, err_card_h)
+        pygame.draw.rect(screen, CARD, err_card, border_radius=8)
+        ey = cy + 8
+        max_y = cy + err_card_h - f_small.get_linesize()
+        seen: Set[str] = set()
+        for e in errors:
+            if ey > max_y:
+                break
+            cat = e["category"]
+            label = ERROR_LABELS.get(cat, cat)
+            ew = e.get("expected_word", "")
+            aw = e.get("actual_word", "")
+            if (cat, ew, aw) in seen:
+                continue
+            seen.add((cat, ew, aw))
+            if ew and aw:
+                detail = f"{label}: »{ew}« statt »{aw}«  →  {e['tip']}"
+            elif ew:
+                detail = f"{label}: »{ew}« fehlt  →  {e['tip']}"
+            elif aw:
+                detail = f"{label}: »{aw}« ist zu viel  →  {e['tip']}"
+            else:
+                detail = f"{label}  →  {e['tip']}"
+            ls = f_hint.render(to_nfc(detail), True, WHITE)
+            screen.blit(ls, (margin + 10, ey))
+            ey += f_hint.get_linesize() + 4
+
+    # Continue hint
+    cont = to_nfc("[Leertaste] oder [Eingabe] = weiter")
+    cs = f_hint.render(cont, True, GRAY)
+    screen.blit(cs, cs.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
+
+
+def _draw_summary(screen, sw, sh, chosen, session_errors,
+                  f_title, f_main, f_small, f_hint,
+                  BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
+
+    margin = int(sw * 0.06)
+    content_w = sw - 2 * margin
+
+    hs = f_title.render(to_nfc("Zusammenfassung"), True, ACCENT)
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.03))))
+
+    # Totals
+    n_sent = len(chosen)
+    n_err  = len(session_errors)
+    perfect = sum(
+        1 for e in session_errors
+        if False  # placeholder – we count per-sentence below
+    )
+    # Count sentences with 0 errors:
+    # We don't store per-sentence error lists separately here,
+    # so derive from session_errors which has all errors concatenated.
+    # Instead use a simpler stat: total errors / sentences
+    stat1 = to_nfc(f"{n_sent} Sätze geschrieben")
+    stat2 = to_nfc(f"{n_err} Fehler insgesamt")
+    stat_col = GREEN if n_err == 0 else (YELLOW if n_err <= 5 else RED)
+    s1 = f_main.render(stat1, True, WHITE)
+    s2 = f_main.render(stat2, True, stat_col)
+    screen.blit(s1, s1.get_rect(midtop=(sw // 2, int(sh * 0.12))))
+    screen.blit(s2, s2.get_rect(midtop=(sw // 2, int(sh * 0.12) + f_main.get_linesize() + 6)))
+
+    if not session_errors:
+        bravo = f_title.render(to_nfc("Super gemacht! Kein einziger Fehler!"), True, GREEN)
+        screen.blit(bravo, bravo.get_rect(center=(sw // 2, sh // 2)))
+    else:
+        # Group errors by category
+        from collections import Counter
+        cat_count: Counter = Counter(e["category"] for e in session_errors)
+        most_common = cat_count.most_common()
+
+        card_y = int(sh * 0.28)
+        card_h = int(sh * 0.60)
+        card_rect = pygame.Rect(margin, card_y, content_w, card_h)
+        pygame.draw.rect(screen, CARD, card_rect, border_radius=12)
+
+        label = f_small.render(to_nfc("Fehlerschwerpunkte:"), True, YELLOW)
+        screen.blit(label, (margin + 12, card_y + 10))
+
+        ey = card_y + 10 + f_small.get_linesize() + 10
+        max_y = card_y + card_h - f_small.get_linesize()
+        for cat, count in most_common:
+            if ey > max_y:
+                break
+            cat_label = ERROR_LABELS.get(cat, cat)
+            tip = ERROR_TIPS.get(cat, "")
+            bar_w = int((content_w - 40) * min(1.0, count / max(1, most_common[0][1])))
+            bar_rect = pygame.Rect(margin + 12, ey + 4, bar_w, f_small.get_linesize() - 4)
+            pygame.draw.rect(screen, (60, 80, 120), bar_rect, border_radius=3)
+            line_text = to_nfc(f"{count}×  {cat_label}  –  {tip}")
+            ls = f_small.render(line_text, True, WHITE)
+            screen.blit(ls, (margin + 12 + 4, ey))
+            ey += f_small.get_linesize() + 8
+
+    cont = to_nfc("[Leertaste], [Q] oder [Eingabe] = beenden")
+    cs = f_hint.render(cont, True, GRAY)
+    screen.blit(cs, cs.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
+
+
+if __name__ == "__main__":
+    main()

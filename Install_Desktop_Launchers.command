@@ -17,7 +17,8 @@ rm -f \
   "$DESKTOP_DIR/Deutsch.command" \
   "$DESKTOP_DIR/1x1.command" \
   "$DESKTOP_DIR/Uhrzeiten.command" \
-  "$DESKTOP_DIR/Update.command"
+  "$DESKTOP_DIR/Update.command" \
+  "$DESKTOP_DIR/Diktat.command"
 
 # Generate standalone launchers that directly run the matching task.
 cat > "$DESKTOP_DIR/Mathe.command" <<EOF
@@ -56,6 +57,15 @@ osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1
 exit 0
 EOF
 
+cat > "$DESKTOP_DIR/Diktat.command" <<EOF
+#!/bin/bash
+set -euo pipefail
+cd "$REPO_DIR"
+python3 -m apps.diktat_trainer
+osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
+exit 0
+EOF
+
 cat > "$DESKTOP_DIR/Update.command" <<EOF
 #!/bin/bash
 set -euo pipefail
@@ -75,6 +85,7 @@ chmod a+x \
   "$DESKTOP_DIR/Deutsch.command" \
   "$DESKTOP_DIR/1x1.command" \
   "$DESKTOP_DIR/Uhrzeiten.command" \
+  "$DESKTOP_DIR/Diktat.command" \
   "$DESKTOP_DIR/Update.command"
 
 # Attach custom icons from internet-downloaded PNG files saved in this repo.
@@ -96,6 +107,7 @@ apply_icon "$REPO_DIR/assets/icons/math.png" "$DESKTOP_DIR/Mathe.command"
 apply_icon "$REPO_DIR/assets/icons/german.png" "$DESKTOP_DIR/Deutsch.command"
 apply_icon "$REPO_DIR/assets/icons/times.png" "$DESKTOP_DIR/1x1.command"
 apply_icon "$REPO_DIR/assets/icons/clock.png" "$DESKTOP_DIR/Uhrzeiten.command"
+apply_icon "$REPO_DIR/assets/icons/german.png" "$DESKTOP_DIR/Diktat.command"
 apply_icon "$REPO_DIR/assets/icons/update.png" "$DESKTOP_DIR/Update.command"
 
 echo "Desktop launchers installed in: $DESKTOP_DIR"

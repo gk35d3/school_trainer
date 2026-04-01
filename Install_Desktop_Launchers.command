@@ -70,12 +70,30 @@ cat > "$DESKTOP_DIR/Update.command" <<EOF
 #!/bin/bash
 set -euo pipefail
 cd "$REPO_DIR"
+
+# Protect trainer_data.jsonl: union merge keeps all lines from both sides.
 mkdir -p .git/info
 grep -qxF 'data/trainer_data.jsonl merge=union' .git/info/attributes 2>/dev/null \
   || echo 'data/trainer_data.jsonl merge=union' >> .git/info/attributes
+git config merge.union.driver true 2>/dev/null || true
+
+# Commit local progress.
 git add data/trainer_data.jsonl
-git commit -m "Latest session record"
+git diff --cached --quiet || git commit -m "Latest session record"
+
+# Remember where we are before pulling.
+BEFORE=\$(git rev-parse HEAD)
+
+# Pull new content, push progress.
 git pull --rebase --autostash --prune
+git push
+
+# If new commits arrived, refresh desktop launchers automatically.
+AFTER=\$(git rev-parse HEAD)
+if [ "\$BEFORE" != "\$AFTER" ]; then
+  bash "$REPO_DIR/Install_Desktop_Launchers.command"
+fi
+
 osascript -e 'tell application "Terminal" to close front window' >/dev/null 2>&1 &
 exit 0
 EOF
@@ -107,7 +125,7 @@ apply_icon "$REPO_DIR/assets/icons/math.png" "$DESKTOP_DIR/Mathe.command"
 apply_icon "$REPO_DIR/assets/icons/german.png" "$DESKTOP_DIR/Deutsch.command"
 apply_icon "$REPO_DIR/assets/icons/times.png" "$DESKTOP_DIR/1x1.command"
 apply_icon "$REPO_DIR/assets/icons/clock.png" "$DESKTOP_DIR/Uhrzeiten.command"
-apply_icon "$REPO_DIR/assets/icons/german.png" "$DESKTOP_DIR/Diktat.command"
+apply_icon "$REPO_DIR/assets/icons/diktat.png" "$DESKTOP_DIR/Diktat.command"
 apply_icon "$REPO_DIR/assets/icons/update.png" "$DESKTOP_DIR/Update.command"
 
 echo "Desktop launchers installed in: $DESKTOP_DIR"

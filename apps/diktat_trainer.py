@@ -13,7 +13,6 @@ import difflib
 import hashlib
 import os
 import random
-import re
 import subprocess
 import unicodedata
 from typing import Dict, List, Optional, Set, Tuple
@@ -522,9 +521,9 @@ def draw_progress_bar(screen, rect, frac: float, color=(100, 180, 100)):
 
 
 def draw_speaker_icon(screen, cx: int, cy: int, size: int, active: bool):
-    """Simple speaker shape."""
-    col = (120, 200, 255) if active else (100, 100, 130)
-    # Body
+    """Simple speaker shape. cx/cy = centre of the icon."""
+    col = (120, 200, 255) if active else (80, 90, 120)
+    # Body rectangle
     body = pygame.Rect(cx - size // 2, cy - size // 3, size // 2, size * 2 // 3)
     pygame.draw.rect(screen, col, body)
     # Cone
@@ -535,14 +534,23 @@ def draw_speaker_icon(screen, cx: int, cy: int, size: int, active: bool):
         (cx, cy + size // 3),
     ]
     pygame.draw.polygon(screen, col, pts)
-    # Sound waves when active
-    if active:
-        for r in (size * 3 // 4, size):
-            pygame.draw.arc(
-                screen, col,
-                pygame.Rect(cx + size // 4, cy - r // 2, r, r),
-                -0.8, 0.8, max(1, size // 12),
-            )
+    # Sound wave arc (always drawn; brighter when active)
+    wave_col = (160, 220, 255) if active else (100, 110, 140)
+    r = int(size * 0.75)
+    pygame.draw.arc(
+        screen, wave_col,
+        pygame.Rect(cx + size // 4, cy - r // 2, r, r),
+        -0.7, 0.7, max(2, size // 10),
+    )
+
+
+def _speaker_rect(sw: int, sh: int, base: int) -> pygame.Rect:
+    """Clickable area of the speaker icon on the input screen."""
+    margin = int(sw * 0.06)
+    row_cy = int(sh * 0.46)
+    half = int(base * 1.1)
+    spk_cx = margin + half
+    return pygame.Rect(spk_cx - half, row_cy - half, half * 2, half * 2)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -613,24 +621,29 @@ def main():
 
     running = True
     while running:
-        dt = clock.tick(FPS)
+        clock.tick(FPS)
         playing = audio_playing()
+        spk_rect = _speaker_rect(sw, sh, base)
 
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 running = False
+
+            elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                if state == "input" and spk_rect.collidepoint(ev.pos):
+                    stop_audio()
+                    play_audio(audio_paths[idx])
+
             elif ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE:
                     running = False
 
                 elif state == "input":
                     if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        # Submit
                         errors = analyse_errors(chosen[idx]["text"], user_text)
                         bad_idx = wrong_word_indices(chosen[idx]["text"], user_text)
                         stop_audio()
                         state = "feedback"
-                        # Log
                         append_event({
                             "type": "attempt", "app_id": APP_ID,
                             "session_id": session_id,
@@ -643,21 +656,8 @@ def main():
                         })
                         session_errors.extend(errors)
 
-                    elif ev.key in (pygame.K_r, pygame.K_SPACE) and not user_text:
-                        # Replay if nothing typed yet (Space) or always with R
-                        stop_audio()
-                        play_audio(audio_paths[idx])
-
-                    elif ev.key == pygame.K_r:
-                        stop_audio()
-                        play_audio(audio_paths[idx])
-
                     elif ev.key == pygame.K_BACKSPACE:
-                        if ev.mod & pygame.KMOD_CTRL:
-                            # Delete last word
-                            user_text = re.sub(r"\S+\s*$", "", user_text)
-                        else:
-                            user_text = user_text[:-1]
+                        user_text = user_text[:-1]
 
                     elif ev.unicode and len(user_text) < MAX_INPUT_CHARS:
                         user_text += ev.unicode
@@ -690,18 +690,18 @@ def main():
 
         if state == "input":
             _draw_input(screen, sw, sh, chosen, idx, user_text, playing,
-                        audio_paths, f_title, f_main, f_input, f_small, f_hint,
-                        BG, CARD, ACCENT, GREEN, WHITE, GRAY, YELLOW, base)
+                        spk_rect, f_title, f_input, f_hint,
+                        CARD, ACCENT, WHITE, GRAY, base)
 
         elif state == "feedback":
             _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
                            f_title, f_main, f_input, f_small, f_hint,
-                           BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
+                           CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
 
         elif state == "summary":
             _draw_summary(screen, sw, sh, chosen, session_errors,
                           f_title, f_main, f_small, f_hint,
-                          BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
+                          CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
 
         pygame.display.flip()
 
@@ -713,8 +713,8 @@ def main():
 # ─────────────────────────────────────────────────────────────
 
 def _draw_input(screen, sw, sh, chosen, idx, user_text, playing,
-                audio_paths, f_title, f_main, f_input, f_small, f_hint,
-                BG, CARD, ACCENT, GREEN, WHITE, GRAY, YELLOW, base):
+                spk_rect, f_title, f_input, f_hint,
+                CARD, ACCENT, WHITE, GRAY, base):
 
     margin = int(sw * 0.06)
     content_w = sw - 2 * margin
@@ -722,110 +722,81 @@ def _draw_input(screen, sw, sh, chosen, idx, user_text, playing,
     # Header
     header = to_nfc(f"Diktat  –  Satz {idx + 1} von {len(chosen)}")
     hs = f_title.render(header, True, ACCENT)
-    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.04))))
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.06))))
 
-    # Speaker card
-    card_h = int(sh * 0.22)
-    card_y = int(sh * 0.14)
-    card_rect = pygame.Rect(margin, card_y, content_w, card_h)
-    pygame.draw.rect(screen, CARD, card_rect, border_radius=12)
+    # Speaker icon (clickable, to the left of input box)
+    spk_cx = spk_rect.centerx
+    spk_cy = spk_rect.centery
+    spk_size = int(base * 0.8)
+    draw_speaker_icon(screen, spk_cx, spk_cy, spk_size, playing)
 
-    spk_x = margin + int(content_w * 0.12)
-    spk_y = card_y + card_h // 2
-    draw_speaker_icon(screen, spk_x, spk_y, base, playing)
-
-    instr_lines = [
-        to_nfc("Hör gut zu und tippe den Satz."),
-        to_nfc("[R] = nochmal hören"),
-    ]
-    iy = card_y + card_h // 2 - f_main.get_linesize()
-    for line in instr_lines:
-        ls = f_small.render(line, True, GRAY if not playing else WHITE)
-        screen.blit(ls, ls.get_rect(midleft=(margin + int(content_w * 0.22), iy)))
-        iy += f_small.get_linesize() + 4
-
-    if playing:
-        dot_y = card_y + card_h - base // 2
-        for i in range(5):
-            bh = int(base * 0.15 * (1 + ((pygame.time.get_ticks() // 120 + i) % 5) * 0.5))
-            bx = sw // 2 - 40 + i * 20
-            pygame.draw.rect(screen, ACCENT,
-                             pygame.Rect(bx, dot_y - bh // 2, 10, bh), border_radius=3)
-
-    # Input box
-    box_y = int(sh * 0.44)
-    box_h = int(sh * 0.20)
-    box_rect = pygame.Rect(margin, box_y, content_w, box_h)
+    # Input box (right of speaker)
+    box_x = spk_rect.right + int(sw * 0.02)
+    box_y = int(sh * 0.34)
+    box_h = int(sh * 0.24)
+    box_w = sw - margin - box_x
+    box_rect = pygame.Rect(box_x, box_y, box_w, box_h)
     pygame.draw.rect(screen, CARD, box_rect, border_radius=10)
     pygame.draw.rect(screen, ACCENT, box_rect, 2, border_radius=10)
 
     display_text = to_nfc(user_text + "│")
-    lines = wrap_text(f_input, display_text, content_w - 24)
+    lines = wrap_text(f_input, display_text, box_w - 24)
     lh = f_input.get_linesize() + 4
-    ty = box_y + 12
+    ty = box_y + 14
     for line in lines:
         ls = f_input.render(line, True, WHITE)
-        screen.blit(ls, (margin + 12, ty))
+        screen.blit(ls, (box_x + 12, ty))
         ty += lh
 
-    # Hint
-    hint = to_nfc("[Eingabe] = fertig   [R] = nochmal hören   [Strg+Rück] = Wort löschen")
+    # Minimal hint
+    hint = to_nfc("Eingabe = fertig")
     hs2 = f_hint.render(hint, True, GRAY)
     screen.blit(hs2, hs2.get_rect(midbottom=(sw // 2, sh - int(sh * 0.03))))
 
     # Progress bar
     bar_h = max(6, sh // 80)
-    bar_rect = pygame.Rect(margin, sh - int(sh * 0.07), content_w, bar_h)
+    bar_rect = pygame.Rect(margin, sh - int(sh * 0.08), content_w, bar_h)
     draw_progress_bar(screen, bar_rect, idx / len(chosen))
 
 
 def _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
                    f_title, f_main, f_input, f_small, f_hint,
-                   BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
+                   CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
 
     margin = int(sw * 0.06)
     content_w = sw - 2 * margin
 
     # Header
     if not errors:
-        header = to_nfc("Richtig! ✓")
+        header = to_nfc("Richtig!")
         hcol = GREEN
     else:
-        n = len(errors)
-        header = to_nfc(f"{n} Fehler")
+        header = to_nfc(f"{len(errors)} Fehler")
         hcol = RED
     hs = f_title.render(header, True, hcol)
-    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.04))))
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.05))))
 
-    # Correct sentence (green)
-    cy = int(sh * 0.14)
-    label_corr = f_small.render(to_nfc("Richtig:"), True, GREEN)
-    screen.blit(label_corr, (margin, cy))
-    cy += f_small.get_linesize() + 4
-    card_h = int(sh * 0.12)
+    cy = int(sh * 0.18)
+    card_h = int(sh * 0.13)
+
+    # Correct sentence
     pygame.draw.rect(screen, CARD, pygame.Rect(margin, cy, content_w, card_h), border_radius=8)
     draw_text_block(screen, f_main, chosen[idx]["text"], margin, cy, content_w, color=GREEN)
     cy += card_h + int(sh * 0.02)
 
     # Student's answer
-    label_ans = f_small.render(to_nfc("Dein Satz:"), True, WHITE)
-    screen.blit(label_ans, (margin, cy))
-    cy += f_small.get_linesize() + 4
-    ans_card = pygame.Rect(margin, cy, content_w, int(sh * 0.12))
+    ans_card = pygame.Rect(margin, cy, content_w, card_h)
     pygame.draw.rect(screen, CARD, ans_card, border_radius=8)
     draw_answer_with_errors(screen, f_main, user_text or "–",
                             margin, cy, content_w, bad_idx, WHITE)
-    cy += ans_card.height + int(sh * 0.02)
+    cy += card_h + int(sh * 0.02)
 
-    # Error list
+    # Error explanations
     if errors:
-        label_err = f_small.render(to_nfc("Fehler:"), True, YELLOW)
-        screen.blit(label_err, (margin, cy))
-        cy += f_small.get_linesize() + 6
-        err_card_h = int(sh * 0.25)
+        err_card_h = int(sh * 0.38)
         err_card = pygame.Rect(margin, cy, content_w, err_card_h)
         pygame.draw.rect(screen, CARD, err_card, border_radius=8)
-        ey = cy + 8
+        ey = cy + 10
         max_y = cy + err_card_h - f_small.get_linesize()
         seen: Set[str] = set()
         for e in errors:
@@ -835,89 +806,71 @@ def _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
             label = ERROR_LABELS.get(cat, cat)
             ew = e.get("expected_word", "")
             aw = e.get("actual_word", "")
-            if (cat, ew, aw) in seen:
+            key = (cat, ew, aw)
+            if key in seen:
                 continue
-            seen.add((cat, ew, aw))
+            seen.add(key)
             if ew and aw:
-                detail = f"{label}: »{ew}« statt »{aw}«  →  {e['tip']}"
+                detail = f"»{ew}« statt »{aw}«  –  {e['tip']}"
             elif ew:
-                detail = f"{label}: »{ew}« fehlt  →  {e['tip']}"
-            elif aw:
-                detail = f"{label}: »{aw}« ist zu viel  →  {e['tip']}"
+                detail = f"»{ew}« fehlt  –  {e['tip']}"
             else:
-                detail = f"{label}  →  {e['tip']}"
-            ls = f_hint.render(to_nfc(detail), True, WHITE)
-            screen.blit(ls, (margin + 10, ey))
-            ey += f_hint.get_linesize() + 4
+                detail = f"»{aw}« ist zu viel  –  {e['tip']}"
+            col_label = f_small.render(to_nfc(label + ":"), True, YELLOW)
+            screen.blit(col_label, (margin + 10, ey))
+            col_detail = f_hint.render(to_nfc(detail), True, WHITE)
+            screen.blit(col_detail, (margin + 10 + col_label.get_width() + 8, ey))
+            ey += f_small.get_linesize() + 6
 
-    # Continue hint
-    cont = to_nfc("[Leertaste] oder [Eingabe] = weiter")
+    cont = to_nfc("Leertaste = weiter")
     cs = f_hint.render(cont, True, GRAY)
     screen.blit(cs, cs.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
 
 
 def _draw_summary(screen, sw, sh, chosen, session_errors,
                   f_title, f_main, f_small, f_hint,
-                  BG, CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
+                  CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
+    from collections import Counter
 
     margin = int(sw * 0.06)
     content_w = sw - 2 * margin
 
     hs = f_title.render(to_nfc("Zusammenfassung"), True, ACCENT)
-    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.03))))
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.05))))
 
-    # Totals
-    n_sent = len(chosen)
-    n_err  = len(session_errors)
-    perfect = sum(
-        1 for e in session_errors
-        if False  # placeholder – we count per-sentence below
-    )
-    # Count sentences with 0 errors:
-    # We don't store per-sentence error lists separately here,
-    # so derive from session_errors which has all errors concatenated.
-    # Instead use a simpler stat: total errors / sentences
-    stat1 = to_nfc(f"{n_sent} Sätze geschrieben")
-    stat2 = to_nfc(f"{n_err} Fehler insgesamt")
+    n_err = len(session_errors)
     stat_col = GREEN if n_err == 0 else (YELLOW if n_err <= 5 else RED)
-    s1 = f_main.render(stat1, True, WHITE)
-    s2 = f_main.render(stat2, True, stat_col)
-    screen.blit(s1, s1.get_rect(midtop=(sw // 2, int(sh * 0.12))))
-    screen.blit(s2, s2.get_rect(midtop=(sw // 2, int(sh * 0.12) + f_main.get_linesize() + 6)))
+    s2 = f_main.render(to_nfc(f"{len(chosen)} Sätze  –  {n_err} Fehler"), True, stat_col)
+    screen.blit(s2, s2.get_rect(midtop=(sw // 2, int(sh * 0.16))))
 
     if not session_errors:
-        bravo = f_title.render(to_nfc("Super gemacht! Kein einziger Fehler!"), True, GREEN)
+        bravo = f_title.render(to_nfc("Super! Kein einziger Fehler!"), True, GREEN)
         screen.blit(bravo, bravo.get_rect(center=(sw // 2, sh // 2)))
     else:
-        # Group errors by category
-        from collections import Counter
         cat_count: Counter = Counter(e["category"] for e in session_errors)
         most_common = cat_count.most_common()
+        top_count = most_common[0][1]
 
-        card_y = int(sh * 0.28)
-        card_h = int(sh * 0.60)
-        card_rect = pygame.Rect(margin, card_y, content_w, card_h)
-        pygame.draw.rect(screen, CARD, card_rect, border_radius=12)
+        card_y = int(sh * 0.26)
+        card_h = int(sh * 0.62)
+        pygame.draw.rect(screen, CARD, pygame.Rect(margin, card_y, content_w, card_h), border_radius=12)
 
-        label = f_small.render(to_nfc("Fehlerschwerpunkte:"), True, YELLOW)
-        screen.blit(label, (margin + 12, card_y + 10))
-
-        ey = card_y + 10 + f_small.get_linesize() + 10
+        ey = card_y + 14
         max_y = card_y + card_h - f_small.get_linesize()
         for cat, count in most_common:
             if ey > max_y:
                 break
             cat_label = ERROR_LABELS.get(cat, cat)
             tip = ERROR_TIPS.get(cat, "")
-            bar_w = int((content_w - 40) * min(1.0, count / max(1, most_common[0][1])))
-            bar_rect = pygame.Rect(margin + 12, ey + 4, bar_w, f_small.get_linesize() - 4)
-            pygame.draw.rect(screen, (60, 80, 120), bar_rect, border_radius=3)
-            line_text = to_nfc(f"{count}×  {cat_label}  –  {tip}")
-            ls = f_small.render(line_text, True, WHITE)
-            screen.blit(ls, (margin + 12 + 4, ey))
+            bar_w = int((content_w - 40) * count / max(1, top_count))
+            pygame.draw.rect(screen, (55, 75, 115),
+                             pygame.Rect(margin + 12, ey + 4, bar_w, f_small.get_linesize() - 4),
+                             border_radius=3)
+            ls = f_small.render(to_nfc(f"{count}×  {cat_label}  –  {tip}"), True, WHITE)
+            screen.blit(ls, (margin + 16, ey))
             ey += f_small.get_linesize() + 8
 
-    cont = to_nfc("[Leertaste], [Q] oder [Eingabe] = beenden")
+    cont = to_nfc("Leertaste = beenden")
     cs = f_hint.render(cont, True, GRAY)
     screen.blit(cs, cs.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
 

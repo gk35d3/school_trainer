@@ -354,10 +354,16 @@ def _classify_word_error(expected: str, actual: str) -> str:
     return "rechtschreibung"
 
 
+def _strip_punct(w: str) -> str:
+    return w.strip(".,!?;:»«")
+
+
 def analyse_errors(expected: str, actual: str) -> List[Dict]:
     """
-    Return a list of error dicts:
-      {category, expected_word, actual_word, tip}
+    Return a list of error dicts: {category, expected_word, actual_word, tip}.
+    Uses lowercase+stripped keys for structural alignment so capitalisation
+    differences don't break word matching, then checks each aligned pair for
+    capitalisation separately.
     """
     errors: List[Dict] = []
 
@@ -366,15 +372,26 @@ def analyse_errors(expected: str, actual: str) -> List[Dict]:
 
     matcher = difflib.SequenceMatcher(
         None,
-        [w.lower().rstrip(".,!?;:") for w in exp_words],
-        [w.lower().rstrip(".,!?;:") for w in act_words],
+        [_strip_punct(w).lower() for w in exp_words],
+        [_strip_punct(w).lower() for w in act_words],
         autojunk=False,
     )
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
-            continue
-        if tag == "replace":
+            # Even "equal" pairs may differ in capitalisation.
+            for k in range(i2 - i1):
+                ew = exp_words[i1 + k]
+                aw = act_words[j1 + k]
+                if _strip_punct(ew) != _strip_punct(aw):
+                    cat = _classify_word_error(ew, aw)
+                    errors.append({
+                        "category": cat,
+                        "expected_word": ew,
+                        "actual_word": aw,
+                        "tip": ERROR_TIPS.get(cat, ""),
+                    })
+        elif tag == "replace":
             for k in range(max(i2 - i1, j2 - j1)):
                 ew = exp_words[i1 + k] if i1 + k < i2 else ""
                 aw = act_words[j1 + k] if j1 + k < j2 else ""
@@ -408,9 +425,7 @@ def analyse_errors(expected: str, actual: str) -> List[Dict]:
                 })
 
     # Punctuation: missing final period
-    exp_stripped = expected.rstrip()
-    act_stripped = actual.rstrip()
-    if exp_stripped.endswith(".") and not act_stripped.endswith("."):
+    if expected.rstrip().endswith(".") and not actual.rstrip().endswith("."):
         errors.append({
             "category": "satzzeichen",
             "expected_word": ".",
@@ -422,18 +437,23 @@ def analyse_errors(expected: str, actual: str) -> List[Dict]:
 
 
 def wrong_word_indices(expected: str, actual: str) -> Set[int]:
-    """Return 0-based indices of words in `actual` that differ from expected."""
+    """Return 0-based indices of words in `actual` that differ from expected,
+    including capitalisation differences found in aligned 'equal' blocks."""
     exp_words = expected.strip().split()
     act_words = actual.strip().split() if actual.strip() else []
     bad: Set[int] = set()
     matcher = difflib.SequenceMatcher(
         None,
-        [w.lower().rstrip(".,!?;:") for w in exp_words],
-        [w.lower().rstrip(".,!?;:") for w in act_words],
+        [_strip_punct(w).lower() for w in exp_words],
+        [_strip_punct(w).lower() for w in act_words],
         autojunk=False,
     )
-    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
-        if tag != "equal":
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                if _strip_punct(exp_words[i1 + k]) != _strip_punct(act_words[j1 + k]):
+                    bad.add(j1 + k)
+        elif tag != "equal":
             for j in range(j1, j2):
                 bad.add(j)
     return bad
@@ -604,8 +624,9 @@ def main():
 
     # ── Session state ─────────────────────────────────────────
     idx          = 0          # current sentence index
-    state        = "input"    # "input" | "feedback" | "summary"
+    state        = "input"    # "input" | "feedback" | "copy" | "summary"
     user_text    = ""
+    copy_text    = ""         # typed text in the copy-practice screen
     errors: List[Dict]  = []
     bad_idx: Set[int]   = set()
     session_errors: List[Dict] = []   # all errors across session
@@ -664,6 +685,29 @@ def main():
 
                 elif state == "feedback":
                     if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        if errors:
+                            # Go to copy-practice before the next sentence
+                            copy_text = ""
+                            state = "copy"
+                        else:
+                            idx += 1
+                            if idx >= len(chosen):
+                                state = "summary"
+                                append_event({
+                                    "type": "session_end", "app_id": APP_ID,
+                                    "session_id": session_id,
+                                    "total_errors": len(session_errors),
+                                    "ts": now_ts(),
+                                })
+                            else:
+                                user_text = ""
+                                errors = []
+                                bad_idx = set()
+                                state = "input"
+                                play_audio(audio_paths[idx])
+
+                elif state == "copy":
+                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         idx += 1
                         if idx >= len(chosen):
                             state = "summary"
@@ -675,10 +719,15 @@ def main():
                             })
                         else:
                             user_text = ""
+                            copy_text = ""
                             errors = []
                             bad_idx = set()
                             state = "input"
                             play_audio(audio_paths[idx])
+                    elif ev.key == pygame.K_BACKSPACE:
+                        copy_text = copy_text[:-1]
+                    elif ev.unicode and len(copy_text) < MAX_INPUT_CHARS:
+                        copy_text += ev.unicode
 
                 elif state == "summary":
                     if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
@@ -697,6 +746,11 @@ def main():
             _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
                            f_title, f_main, f_input, f_small, f_hint,
                            CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base)
+
+        elif state == "copy":
+            _draw_copy(screen, sw, sh, chosen, idx, copy_text,
+                       f_title, f_main, f_input, f_hint,
+                       CARD, ACCENT, GREEN, WHITE, GRAY, base)
 
         elif state == "summary":
             _draw_summary(screen, sw, sh, chosen, session_errors,
@@ -759,6 +813,11 @@ def _draw_input(screen, sw, sh, chosen, idx, user_text, playing,
     draw_progress_bar(screen, bar_rect, idx / len(chosen))
 
 
+def _text_block_height(f, text: str, max_w: int, line_gap: int = 6) -> int:
+    lines = wrap_text(f, to_nfc(text), max_w)
+    return len(lines) * (f.get_linesize() + line_gap)
+
+
 def _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
                    f_title, f_main, f_input, f_small, f_hint,
                    CARD, ACCENT, GREEN, RED, WHITE, GRAY, YELLOW, base):
@@ -766,65 +825,129 @@ def _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
     margin = int(sw * 0.06)
     content_w = sw - 2 * margin
 
-    # Header
     if not errors:
-        header = to_nfc("Richtig!")
-        hcol = GREEN
-    else:
-        header = to_nfc(f"{len(errors)} Fehler")
-        hcol = RED
-    hs = f_title.render(header, True, hcol)
-    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.05))))
+        # ── Correct: show sentence large and centred ──────────
+        hs = f_title.render(to_nfc("Richtig!"), True, GREEN)
+        screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.05))))
 
-    cy = int(sh * 0.18)
+        # Vertically centre the sentence
+        lh = f_main.get_linesize() + 6
+        lines = wrap_text(f_main, to_nfc(chosen[idx]["text"]), content_w - 40)
+        total_h = len(lines) * lh
+        start_y = (sh - total_h) // 2
+        for i, line in enumerate(lines):
+            surf = f_main.render(line, True, GREEN)
+            screen.blit(surf, surf.get_rect(midtop=(sw // 2, start_y + i * lh)))
+
+        cont = f_hint.render(to_nfc("Leertaste = weiter"), True, GRAY)
+        screen.blit(cont, cont.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
+        return
+
+    # ── Errors: header ────────────────────────────────────────
+    hs = f_title.render(to_nfc(f"{len(errors)} Fehler"), True, RED)
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.03))))
+
+    cy = int(sh * 0.14)
     card_h = int(sh * 0.13)
 
     # Correct sentence
     pygame.draw.rect(screen, CARD, pygame.Rect(margin, cy, content_w, card_h), border_radius=8)
     draw_text_block(screen, f_main, chosen[idx]["text"], margin, cy, content_w, color=GREEN)
-    cy += card_h + int(sh * 0.02)
+    cy += card_h + int(sh * 0.015)
 
     # Student's answer
     ans_card = pygame.Rect(margin, cy, content_w, card_h)
     pygame.draw.rect(screen, CARD, ans_card, border_radius=8)
     draw_answer_with_errors(screen, f_main, user_text or "–",
                             margin, cy, content_w, bad_idx, WHITE)
-    cy += card_h + int(sh * 0.02)
+    cy += card_h + int(sh * 0.015)
 
-    # Error explanations
-    if errors:
-        err_card_h = int(sh * 0.38)
-        err_card = pygame.Rect(margin, cy, content_w, err_card_h)
-        pygame.draw.rect(screen, CARD, err_card, border_radius=8)
-        ey = cy + 10
-        max_y = cy + err_card_h - f_small.get_linesize()
-        seen: Set[str] = set()
-        for e in errors:
+    # Error explanations – each entry may wrap onto multiple lines
+    remaining_h = sh - cy - int(sh * 0.08)
+    err_card = pygame.Rect(margin, cy, content_w, remaining_h)
+    pygame.draw.rect(screen, CARD, err_card, border_radius=8)
+    ey = cy + 10
+    max_y = cy + remaining_h - f_hint.get_linesize() - 4
+    seen: Set[str] = set()
+    lh_small = f_small.get_linesize() + 4
+    lh_hint  = f_hint.get_linesize() + 2
+
+    for e in errors:
+        if ey > max_y:
+            break
+        cat = e["category"]
+        label = ERROR_LABELS.get(cat, cat)
+        ew = e.get("expected_word", "")
+        aw = e.get("actual_word", "")
+        key = (cat, ew, aw)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Category label
+        col_label = f_small.render(to_nfc(label + ":"), True, YELLOW)
+        screen.blit(col_label, (margin + 10, ey))
+        ey += lh_small
+
+        # Detail line(s) – wrapped
+        if ew and aw:
+            detail = f"»{ew}« statt »{aw}«  –  {e['tip']}"
+        elif ew:
+            detail = f"»{ew}« fehlt  –  {e['tip']}"
+        else:
+            detail = f"»{aw}« ist zu viel  –  {e['tip']}"
+        for dl in wrap_text(f_hint, to_nfc(detail), content_w - 30):
             if ey > max_y:
                 break
-            cat = e["category"]
-            label = ERROR_LABELS.get(cat, cat)
-            ew = e.get("expected_word", "")
-            aw = e.get("actual_word", "")
-            key = (cat, ew, aw)
-            if key in seen:
-                continue
-            seen.add(key)
-            if ew and aw:
-                detail = f"»{ew}« statt »{aw}«  –  {e['tip']}"
-            elif ew:
-                detail = f"»{ew}« fehlt  –  {e['tip']}"
-            else:
-                detail = f"»{aw}« ist zu viel  –  {e['tip']}"
-            col_label = f_small.render(to_nfc(label + ":"), True, YELLOW)
-            screen.blit(col_label, (margin + 10, ey))
-            col_detail = f_hint.render(to_nfc(detail), True, WHITE)
-            screen.blit(col_detail, (margin + 10 + col_label.get_width() + 8, ey))
-            ey += f_small.get_linesize() + 6
+            ds = f_hint.render(dl, True, WHITE)
+            screen.blit(ds, (margin + 18, ey))
+            ey += lh_hint
+        ey += 4  # gap between errors
 
-    cont = to_nfc("Leertaste = weiter")
-    cs = f_hint.render(cont, True, GRAY)
-    screen.blit(cs, cs.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
+    cont = f_hint.render(to_nfc("Leertaste = weiter"), True, GRAY)
+    screen.blit(cont, cont.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
+
+
+def _draw_copy(screen, sw, sh, chosen, idx, copy_text,
+               f_title, f_main, f_input, f_hint,
+               CARD, ACCENT, GREEN, WHITE, GRAY, base):
+    """Practice screen: correct sentence shown above, student types it."""
+    margin = int(sw * 0.06)
+    content_w = sw - 2 * margin
+
+    hs = f_title.render(to_nfc("Schreib es richtig ab:"), True, ACCENT)
+    screen.blit(hs, hs.get_rect(midtop=(sw // 2, int(sh * 0.05))))
+
+    # Correct sentence card
+    lh = f_main.get_linesize() + 6
+    lines = wrap_text(f_main, to_nfc(chosen[idx]["text"]), content_w - 24)
+    card_h = max(int(sh * 0.13), len(lines) * lh + 20)
+    card_y = int(sh * 0.17)
+    pygame.draw.rect(screen, CARD, pygame.Rect(margin, card_y, content_w, card_h), border_radius=8)
+    ty = card_y + 10
+    for line in lines:
+        surf = f_main.render(line, True, GREEN)
+        screen.blit(surf, surf.get_rect(midtop=(sw // 2, ty)))
+        ty += lh
+
+    # Input box
+    box_y = card_y + card_h + int(sh * 0.04)
+    box_h = int(sh * 0.22)
+    box_rect = pygame.Rect(margin, box_y, content_w, box_h)
+    pygame.draw.rect(screen, CARD, box_rect, border_radius=10)
+    pygame.draw.rect(screen, ACCENT, box_rect, 2, border_radius=10)
+
+    disp = to_nfc(copy_text + "│")
+    ilines = wrap_text(f_input, disp, content_w - 24)
+    ilh = f_input.get_linesize() + 4
+    iy = box_y + 14
+    for line in ilines:
+        ls = f_input.render(line, True, WHITE)
+        screen.blit(ls, (margin + 12, iy))
+        iy += ilh
+
+    hint = f_hint.render(to_nfc("Eingabe = weiter"), True, GRAY)
+    screen.blit(hint, hint.get_rect(midbottom=(sw // 2, sh - int(sh * 0.02))))
 
 
 def _draw_summary(screen, sw, sh, chosen, session_errors,

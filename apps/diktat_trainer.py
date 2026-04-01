@@ -313,14 +313,16 @@ def _nfc(s: str) -> str:
 
 def _classify_word_error(expected: str, actual: str) -> str:
     """Return the most likely error category for one mismatched word."""
-    exp = _nfc(expected.lower().rstrip(".,!?;:"))
-    act = _nfc(actual.lower().rstrip(".,!?;:"))
+    # Normalise: strip trailing punctuation, apply NFC, lowercase for body checks.
+    exp = _nfc(_strip_punct(expected).lower())
+    act = _nfc(_strip_punct(actual).lower())
 
-    # Capitalisation
-    if expected and actual:
-        if expected[0].isupper() and actual[0].islower():
+    # Capitalisation – only when the lowercase bodies are identical.
+    # Prevents mis-labelling a completely wrong word as a cap error.
+    if exp == act and expected and actual:
+        if _strip_punct(expected)[0].isupper() and _strip_punct(actual)[0].islower():
             return "großschreibung"
-        if expected[0].islower() and actual[0].isupper():
+        if _strip_punct(expected)[0].islower() and _strip_punct(actual)[0].isupper():
             return "kleinschreibung"
 
     # ß ↔ ss
@@ -889,13 +891,15 @@ def _draw_feedback(screen, sw, sh, chosen, idx, user_text, errors, bad_idx,
         screen.blit(col_label, (margin + 10, ey))
         ey += lh_small
 
-        # Detail line(s) – wrapped
-        if ew and aw:
-            detail = f"»{ew}« statt »{aw}«  –  {e['tip']}"
-        elif ew:
-            detail = f"»{ew}« fehlt  –  {e['tip']}"
+        # Detail line(s) – wrapped; strip trailing punct from displayed words.
+        ew_d = _strip_punct(ew) if ew else ""
+        aw_d = _strip_punct(aw) if aw else ""
+        if ew_d and aw_d:
+            detail = f"»{ew_d}« statt »{aw_d}«  –  {e['tip']}"
+        elif ew_d:
+            detail = f"»{ew_d}« fehlt  –  {e['tip']}"
         else:
-            detail = f"»{aw}« ist zu viel  –  {e['tip']}"
+            detail = f"»{aw_d}« ist zu viel  –  {e['tip']}"
         for dl in wrap_text(f_hint, to_nfc(detail), content_w - 30):
             if ey > max_y:
                 break

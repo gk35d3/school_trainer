@@ -342,17 +342,23 @@ def _classify_word_error(exp_word: str, act_word: str) -> str:
     ab = _word_body(act_word)   # lowercase body of actual
 
     # ── 1. Capitalisation ──────────────────────────────────────
-    # Only raised when bodies are identical, so "Schule" vs "shule"
-    # is never mis-labelled as a capitalisation error.
+    # When lowercase bodies are identical the words are spelled correctly;
+    # any remaining difference is purely a capitalisation error.
+    # We never fall through to the spelling checks in this branch.
     if eb == ab:
-        exp_first = _strip_punct(exp_word)[:1]
-        act_first = _strip_punct(act_word)[:1]
-        if exp_first.isupper() and act_first.islower():
+        ew_s = _strip_punct(exp_word)
+        aw_s = _strip_punct(act_word)
+        if ew_s == aw_s:
+            # Truly identical – caller should not have called this
+            return "rechtschreibung"
+        # Expected uppercase first letter, student wrote lowercase → Noun not capitalised
+        if ew_s[:1].isupper() and aw_s[:1].islower():
             return "großschreibung"
-        if exp_first.islower() and act_first.isupper():
+        # Expected lowercase first letter, student capitalised → wrong capitalisation
+        if ew_s[:1].islower() and aw_s[:1].isupper():
             return "kleinschreibung"
-        # Bodies identical AND same case → identical words (shouldn't be called)
-        return "rechtschreibung"
+        # Any other case mismatch (e.g. "See" → "SEE", or mixed caps) → too many capitals
+        return "großschreibung"
 
     # ── 2. ß ↔ ss ─────────────────────────────────────────────
     if eb.replace("ß", "ss") == ab or ab.replace("ß", "ss") == eb:

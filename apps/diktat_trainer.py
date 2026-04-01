@@ -311,151 +311,167 @@ def _nfc(s: str) -> str:
     return unicodedata.normalize("NFC", s)
 
 
-def _classify_word_error(expected: str, actual: str) -> str:
-    """Return the most likely error category for one mismatched word."""
-    # Normalise: strip trailing punctuation, apply NFC, lowercase for body checks.
-    exp = _nfc(_strip_punct(expected).lower())
-    act = _nfc(_strip_punct(actual).lower())
+def _strip_punct(w: str) -> str:
+    """Remove leading/trailing punctuation, keep the word body."""
+    return w.strip(".,!?;:»«")
 
-    # Capitalisation – only when the lowercase bodies are identical.
-    # Prevents mis-labelling a completely wrong word as a cap error.
-    if exp == act and expected and actual:
-        if _strip_punct(expected)[0].isupper() and _strip_punct(actual)[0].islower():
+
+def _word_body(w: str) -> str:
+    """NFC-normalised, lowercase body with punctuation stripped."""
+    return _nfc(_strip_punct(w).lower())
+
+
+def _classify_word_error(exp_word: str, act_word: str) -> str:
+    """
+    Classify the error between one expected word and one actual word.
+    Both inputs are the raw (original-case) words from the sentence.
+
+    Decision tree
+    ─────────────
+    1. Bodies identical (after lowercase+NFC+strip_punct)?
+       → capitalisation error (groß/kleinschreibung)
+    2. ß ↔ ss?   → sz_ss
+    3. Umlaut dropped/swapped?   → umlaut
+    4. ie ↔ ei?   → ie_ei
+    5. Double consonant missing?   → doppelkonsonant
+    6. ck ↔ k?   → ck
+    7. tz ↔ z?   → tz
+    8. Anything else   → rechtschreibung
+    """
+    eb = _word_body(exp_word)   # lowercase body of expected
+    ab = _word_body(act_word)   # lowercase body of actual
+
+    # ── 1. Capitalisation ──────────────────────────────────────
+    # Only raised when bodies are identical, so "Schule" vs "shule"
+    # is never mis-labelled as a capitalisation error.
+    if eb == ab:
+        exp_first = _strip_punct(exp_word)[:1]
+        act_first = _strip_punct(act_word)[:1]
+        if exp_first.isupper() and act_first.islower():
             return "großschreibung"
-        if _strip_punct(expected)[0].islower() and _strip_punct(actual)[0].isupper():
+        if exp_first.islower() and act_first.isupper():
             return "kleinschreibung"
+        # Bodies identical AND same case → identical words (shouldn't be called)
+        return "rechtschreibung"
 
-    # ß ↔ ss
-    if exp.replace("ß", "ss") == act or act.replace("ß", "ss") == exp:
+    # ── 2. ß ↔ ss ─────────────────────────────────────────────
+    if eb.replace("ß", "ss") == ab or ab.replace("ß", "ss") == eb:
         return "sz_ss"
 
-    # Umlaut missing or wrong
-    def strip_umlaut(s: str) -> str:
+    # ── 3. Umlaut ─────────────────────────────────────────────
+    def drop_uml(s: str) -> str:
         return s.replace("ä", "a").replace("ö", "o").replace("ü", "u")
-    if strip_umlaut(exp) == strip_umlaut(act) and exp != act:
+    if drop_uml(eb) == drop_uml(ab):
         return "umlaut"
 
-    # ie ↔ ei
-    if exp.replace("ie", "ei") == act or exp.replace("ei", "ie") == act:
+    # ── 4. ie / ei ────────────────────────────────────────────
+    if eb.replace("ie", "ei") == ab or eb.replace("ei", "ie") == ab:
         return "ie_ei"
 
-    # Double consonant → single
+    # ── 5. Double consonant ───────────────────────────────────
     for cc in ("ll", "mm", "nn", "pp", "rr", "ss", "tt", "ff", "bb", "gg", "dd"):
-        c = cc[0]
-        if exp.replace(cc, c) == act or act.replace(cc, c) == exp:
+        if eb.replace(cc, cc[0]) == ab or ab.replace(cc, cc[0]) == eb:
             return "doppelkonsonant"
 
-    # ck ↔ k
-    if exp.replace("ck", "k") == act or act.replace("ck", "k") == exp:
+    # ── 6. ck ─────────────────────────────────────────────────
+    if eb.replace("ck", "k") == ab or ab.replace("ck", "k") == eb:
         return "ck"
 
-    # tz ↔ z / ts
-    if exp.replace("tz", "z") == act or act.replace("tz", "z") == exp:
+    # ── 7. tz ─────────────────────────────────────────────────
+    if eb.replace("tz", "z") == ab or ab.replace("tz", "z") == eb:
         return "tz"
 
     return "rechtschreibung"
 
 
-def _strip_punct(w: str) -> str:
-    return w.strip(".,!?;:»«")
+def _error(cat: str, ew: str, aw: str) -> Dict:
+    return {"category": cat, "expected_word": ew, "actual_word": aw,
+            "tip": ERROR_TIPS.get(cat, "")}
 
 
 def analyse_errors(expected: str, actual: str) -> List[Dict]:
     """
-    Return a list of error dicts: {category, expected_word, actual_word, tip}.
-    Uses lowercase+stripped keys for structural alignment so capitalisation
-    differences don't break word matching, then checks each aligned pair for
-    capitalisation separately.
+    Compare every word in `expected` against `actual` and return a list of
+    error dicts.
+
+    Strategy
+    ────────
+    • Align words using lowercase+stripped keys so that capitalisation
+      differences do not disturb structural alignment (missing/extra words).
+    • For every aligned pair – including those difflib considers 'equal' –
+      compare the ORIGINAL (case-preserved) words to catch capitalisation
+      errors that are invisible to the lowercase aligner.
+    • Detect missing final period separately.
     """
     errors: List[Dict] = []
 
     exp_words = expected.strip().split()
     act_words = actual.strip().split() if actual.strip() else []
 
-    matcher = difflib.SequenceMatcher(
+    # Lowercase+stripped keys used only for alignment, never for error detection.
+    sm = difflib.SequenceMatcher(
         None,
-        [_strip_punct(w).lower() for w in exp_words],
-        [_strip_punct(w).lower() for w in act_words],
+        [_word_body(w) for w in exp_words],
+        [_word_body(w) for w in act_words],
         autojunk=False,
     )
 
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+
         if tag == "equal":
-            # Even "equal" pairs may differ in capitalisation.
+            # Difflib sees these as structurally identical (same lowercase body).
+            # Still compare the ORIGINAL words: capitalisation may differ.
             for k in range(i2 - i1):
                 ew = exp_words[i1 + k]
                 aw = act_words[j1 + k]
+                # _strip_punct preserves case → detects cap differences
                 if _strip_punct(ew) != _strip_punct(aw):
-                    cat = _classify_word_error(ew, aw)
-                    errors.append({
-                        "category": cat,
-                        "expected_word": ew,
-                        "actual_word": aw,
-                        "tip": ERROR_TIPS.get(cat, ""),
-                    })
+                    errors.append(_error(_classify_word_error(ew, aw), ew, aw))
+
         elif tag == "replace":
             for k in range(max(i2 - i1, j2 - j1)):
-                ew = exp_words[i1 + k] if i1 + k < i2 else ""
-                aw = act_words[j1 + k] if j1 + k < j2 else ""
+                ew = exp_words[i1 + k] if (i1 + k) < i2 else ""
+                aw = act_words[j1 + k] if (j1 + k) < j2 else ""
                 if not ew:
-                    cat = "extra_wort"
+                    errors.append(_error("extra_wort", "", aw))
                 elif not aw:
-                    cat = "fehlwort"
+                    errors.append(_error("fehlwort", ew, ""))
                 else:
-                    cat = _classify_word_error(ew, aw)
-                errors.append({
-                    "category": cat,
-                    "expected_word": ew,
-                    "actual_word": aw,
-                    "tip": ERROR_TIPS.get(cat, ""),
-                })
+                    errors.append(_error(_classify_word_error(ew, aw), ew, aw))
+
         elif tag == "delete":
             for i in range(i1, i2):
-                errors.append({
-                    "category": "fehlwort",
-                    "expected_word": exp_words[i],
-                    "actual_word": "",
-                    "tip": ERROR_TIPS["fehlwort"],
-                })
+                errors.append(_error("fehlwort", exp_words[i], ""))
+
         elif tag == "insert":
             for j in range(j1, j2):
-                errors.append({
-                    "category": "extra_wort",
-                    "expected_word": "",
-                    "actual_word": act_words[j],
-                    "tip": ERROR_TIPS["extra_wort"],
-                })
+                errors.append(_error("extra_wort", "", act_words[j]))
 
-    # Punctuation: missing final period
+    # Missing final period (checked separately to avoid double-counting).
     if expected.rstrip().endswith(".") and not actual.rstrip().endswith("."):
-        errors.append({
-            "category": "satzzeichen",
-            "expected_word": ".",
-            "actual_word": "",
-            "tip": ERROR_TIPS["satzzeichen"],
-        })
+        errors.append(_error("satzzeichen", ".", ""))
 
     return errors
 
 
 def wrong_word_indices(expected: str, actual: str) -> Set[int]:
-    """Return 0-based indices of words in `actual` that differ from expected,
-    including capitalisation differences found in aligned 'equal' blocks."""
+    """Return 0-based word indices in `actual` that differ from `expected`."""
     exp_words = expected.strip().split()
     act_words = actual.strip().split() if actual.strip() else []
     bad: Set[int] = set()
-    matcher = difflib.SequenceMatcher(
+    sm = difflib.SequenceMatcher(
         None,
-        [_strip_punct(w).lower() for w in exp_words],
-        [_strip_punct(w).lower() for w in act_words],
+        [_word_body(w) for w in exp_words],
+        [_word_body(w) for w in act_words],
         autojunk=False,
     )
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             for k in range(i2 - i1):
+                # Flag if original forms differ (includes capitalisation)
                 if _strip_punct(exp_words[i1 + k]) != _strip_punct(act_words[j1 + k]):
                     bad.add(j1 + k)
-        elif tag != "equal":
+        else:
             for j in range(j1, j2):
                 bad.add(j)
     return bad
@@ -630,6 +646,7 @@ def main():
     user_text    = ""
     copy_text    = ""         # typed text in the copy-practice screen
     errors: List[Dict]  = []
+    had_errors   = False      # explicit flag: were there errors this sentence?
     bad_idx: Set[int]   = set()
     session_errors: List[Dict] = []   # all errors across session
 
@@ -663,8 +680,9 @@ def main():
 
                 elif state == "input":
                     if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        errors = analyse_errors(chosen[idx]["text"], user_text)
-                        bad_idx = wrong_word_indices(chosen[idx]["text"], user_text)
+                        errors    = analyse_errors(chosen[idx]["text"], user_text)
+                        had_errors = len(errors) > 0
+                        bad_idx   = wrong_word_indices(chosen[idx]["text"], user_text)
                         stop_audio()
                         state = "feedback"
                         append_event({
@@ -673,7 +691,7 @@ def main():
                             "sentence": chosen[idx]["text"],
                             "user_text": user_text,
                             "error_count": len(errors),
-                            "correct": len(errors) == 0,
+                            "correct": not had_errors,
                             "error_categories": list({e["category"] for e in errors}),
                             "ts": now_ts(),
                         })
@@ -687,8 +705,8 @@ def main():
 
                 elif state == "feedback":
                     if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                        if errors:
-                            # Go to copy-practice before the next sentence
+                        if had_errors:
+                            # Errors this sentence → show copy-practice screen first
                             copy_text = ""
                             state = "copy"
                         else:
@@ -704,6 +722,7 @@ def main():
                             else:
                                 user_text = ""
                                 errors = []
+                                had_errors = False
                                 bad_idx = set()
                                 state = "input"
                                 play_audio(audio_paths[idx])
@@ -723,6 +742,7 @@ def main():
                             user_text = ""
                             copy_text = ""
                             errors = []
+                            had_errors = False
                             bad_idx = set()
                             state = "input"
                             play_audio(audio_paths[idx])
